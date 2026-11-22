@@ -66,33 +66,28 @@ class TestWhitelistAndCoercion:
         assert nl_search._coerce_int(True) is None
 
 
-class TestParseFallback:
+class TestParseAiOnly:
+    """NL search is AI-only by design (see test_strict.py): no silent keyword
+    fallback. Failures raise, and the endpoint turns them into a clear 503."""
 
-    def test_fts_fallback_without_provider(self, monkeypatch):
-        monkeypatch.setattr(
-            "app.services.llm.provider.get_provider", lambda: None
-        )
-        filters, mode = nl_search.parse_query("remote python jobs in Berlin")
-        assert mode == "fts"
-        assert filters.keywords == "remote python jobs in Berlin"
-        assert filters.skills == []
+    def test_no_provider_raises(self, monkeypatch):
+        monkeypatch.setattr("app.services.llm.provider.get_provider", lambda: None)
+        with pytest.raises(RuntimeError, match="LLM provider required for NL search"):
+            nl_search.parse_query("remote python jobs in Berlin")
 
-    def test_empty_query_is_fts(self):
-        filters, mode = nl_search.parse_query("   ")
-        assert mode == "fts"
-        assert filters.keywords is None
+    def test_empty_query_raises(self):
+        with pytest.raises(RuntimeError, match="non-empty query"):
+            nl_search.parse_query("   ")
 
-    def test_provider_exception_falls_back(self, monkeypatch):
+    def test_provider_exception_propagates(self, monkeypatch):
         class Boom:
             def complete_json(self, *a, **k):
                 raise RuntimeError("schema never validated")
 
-        monkeypatch.setattr(
-            "app.services.llm.provider.get_provider", lambda: Boom()
-        )
-        filters, mode = nl_search.parse_query("senior data jobs")
-        assert mode == "fts"
-        assert filters.keywords == "senior data jobs"
+        monkeypatch.setattr("app.services.llm.provider.get_provider", lambda: Boom())
+        monkeypatch.setattr("app.services.llm.provider.llm_available", lambda: True)
+        with pytest.raises(RuntimeError, match="schema never validated"):
+            nl_search.parse_query("senior data jobs")
 
 
 class TestHybridRrf:
@@ -153,7 +148,15 @@ class TestHybridRrf:
 
 class TestNlEndpoint:
 
-    def test_nl_search_endpoint_shape(self):
+    def test_nl_search_unavailable_is_503_not_500(self):
+        # conftest disables the LLM: the endpoint must say so, not crash
+        resp = client.get("/api/v1/jobs/nl", params={"q": "python developer"})
+        assert resp.status_code == 503, resp.text
+        assert "keyword search" in resp.json()["detail"]
+
+    def test_nl_search_endpoint_shape(self, monkeypatch):
+        fake = nl_search.SearchFilters(keywords="python developer")
+        monkeypatch.setattr(nl_search, "parse_query", lambda q: (fake, "llm"))
         resp = client.get("/api/v1/jobs/nl", params={"q": "python developer"})
         assert resp.status_code == 200, resp.text
         data = resp.json()

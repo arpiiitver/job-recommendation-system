@@ -182,8 +182,9 @@ def build_job_text(
 # Persistence helpers with provenance tracking (plan §4/§13, Phase 1.3)
 # ---------------------------------------------------------------------------
 
-def ensure_profile_embedding(profile: Any) -> bool:
-    embedder = get_embedder()
+def ensure_profile_embedding(profile: Any, embedder: Embedder | None = None) -> bool:
+    if embedder is None:
+        embedder = get_embedder()
     text = build_profile_text(
         headline=profile.headline,
         bio=profile.bio,

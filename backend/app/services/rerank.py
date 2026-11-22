@@ -428,6 +428,11 @@ def _load_dcn() -> tuple[Any | None, dict | None, str | None]:
             return None, None, None
         manifest = payload.get("manifest") or {}
         feature_order = manifest.get("feature_order") or payload.get("feature_order") or FEATURE_ORDER
+        if list(feature_order) != FEATURE_ORDER:
+            # rows are built positionally in FEATURE_ORDER: a model trained on a
+            # different order would silently score misaligned inputs
+            log.warning("DCN artifact %s feature order differs from serving; not loading", path.name)
+            return None, None, None
         scaler = payload.get("scaler")
         state = payload.get("state_dict") or payload.get("model_state_dict")
         if state is None:

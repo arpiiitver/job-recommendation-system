@@ -397,6 +397,11 @@ def _apply_rate(job: Job) -> float:
 # Recommender
 # ---------------------------------------------------------------------------
 
+class InsufficientProfileError(RuntimeError):
+    """The profile has no skills/headline/bio/resume text to rank on (AI-strict:
+    no heuristic guesses). The feed API turns this into an empty cold-start feed."""
+
+
 class ContentRecommender:
     """Scores/ranks an already-selected candidate pool (plan §4 steps 2–6)."""
 
@@ -427,7 +432,7 @@ class ContentRecommender:
         )
         has_text = bool(profile.headline or profile.bio or profile.raw_resume_text)
         if not (has_skills or has_text):
-            raise RuntimeError(
+            raise InsufficientProfileError(
                 "Insufficient profile data for AI recommendations: skills/headline/bio/resume text required (no heuristic cold-start fallback)"
             )
 

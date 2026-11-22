@@ -42,6 +42,11 @@ jobs:
       - name: Compile
         working-directory: backend
         run: python -m compileall app ml
+      # Integration tests need the demo accounts + golden job corpus; a fresh
+      # CI database has neither (tests previously relied on a hand-built DB).
+      - name: Seed demo data
+        working-directory: backend
+        run: python -m scripts.seed_demo
       - name: Tests
         working-directory: backend
         run: pytest -q

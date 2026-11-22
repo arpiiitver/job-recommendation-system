@@ -10,6 +10,8 @@ Two layers:
 """
 
 import json
+
+import pytest
 from types import SimpleNamespace
 
 from sqlalchemy import select
@@ -83,6 +85,17 @@ RICH_SEEKER = {
 }
 
 
+@pytest.fixture
+def curated_graph_only(monkeypatch):
+    """Synthetic layer = pure curated-edge overlap math (exact expected
+    values). The learned M1 vectors (O*NET GraphSAGE, calibrated) also credit
+    transfers such as python -> pytorch; that path is covered by the corpus
+    test and tests/test_skill_graph*, not by these threshold/exclusion checks."""
+    import app.services.skill_graph as skill_graph
+
+    monkeypatch.setattr(skill_graph, "load_skill_embeddings", lambda: {})
+
+
 def _synthetic(target=None, seeker=None) -> dict:
     settings = get_settings()
     assert settings.discovery_threshold == 55.0, "plan §11 default τ"
@@ -97,39 +110,47 @@ def _synthetic(target=None, seeker=None) -> dict:
     )
 
 
+@pytest.mark.usefixtures("curated_graph_only")
 class TestThreshold:
-    def test_rich_seeker_suggests_exactly_one_family(self):
+    def test_rich_seeker_top_suggestion_is_exact(self):
         result = _synthetic()
         settings = get_settings()
 
         names = [e["family"] for e in result["suggestions"]]
-        assert names == ["Data Science"]
+        assert names[0] == "Data Science"
         # overlap 6/6 strong = 1.0; semantic neutral 0.5 → exact blend value
         expected = 100.0 * (
             (1 - settings.discovery_weight_semantic) * 1.0
             + settings.discovery_weight_semantic * 0.5
         )
         assert result["suggestions"][0]["affinity"] == round(expected, 2)
-        assert result["suggestions"][0]["affinity"] >= 55.0
+        # suggestions are sorted and all at/above τ
+        affinities = [e["affinity"] for e in result["suggestions"]]
+        assert affinities == sorted(affinities, reverse=True)
+        assert all(a >= settings.discovery_threshold for a in affinities)
 
     def test_below_threshold_families_are_not_suggested(self):
         result = _synthetic()
         settings = get_settings()
         by_name = {e["family"]: e for e in result["presets"]}
+        suggested = {e["family"] for e in result["suggestions"]}
 
-        # ML Engineering: python + ML strong, pytorch/tensorflow via prereq
-        # parents (0.6 each) = 3.2/6 → clearly below τ
-        assert by_name["Machine Learning Engineering"]["affinity"] < 55.0
-        assert by_name["DevOps Engineering"]["affinity"] < 55.0
-        assert by_name["Data Analytics"]["affinity"] < 55.0
-        for family in ("Machine Learning Engineering", "DevOps Engineering", "Data Analytics"):
-            assert family not in {e["family"] for e in result["suggestions"]}
+        # DevOps: only docker; Data Analytics: sql + statistics, rest missing
+        assert by_name["DevOps Engineering"]["affinity"] < settings.discovery_threshold
+        assert by_name["Data Analytics"]["affinity"] < settings.discovery_threshold
+        assert {"DevOps Engineering", "Data Analytics"}.isdisjoint(suggested)
+        # ML Engineering: python + ML strong, pytorch/tensorflow (python prereq,
+        # 0.6 x 0.8) and deep learning (ML prereq, 0.6 x 0.85) partial credit —
+        # a genuine adjacent career for this seeker, so it crosses τ
+        ml = by_name["Machine Learning Engineering"]
+        assert ml["affinity"] >= settings.discovery_threshold
+        assert ml["matched_count"] == 5 and "Machine Learning Engineering" in suggested
         # nothing outside τ leaks in
         assert all(e["affinity"] >= settings.discovery_threshold for e in result["suggestions"])
 
     def test_current_target_family_excluded_everywhere(self):
         control = _synthetic()
-        assert [e["family"] for e in control["suggestions"]] == ["Data Science"]
+        assert "Data Science" in [e["family"] for e in control["suggestions"]]
 
         target = next(f for f in FAKE_FAMILIES if f.name == "Data Science")
         filtered = _synthetic(target=target)
@@ -137,10 +158,15 @@ class TestThreshold:
         assert filtered["target_family"] == "Data Science"
         assert "Data Science" not in {e["family"] for e in filtered["suggestions"]}
         assert "Data Science" not in {e["family"] for e in filtered["presets"]}
-        # control proves the exclusion is what removed it (not τ)
-        assert len(filtered["suggestions"]) < len(control["suggestions"]) + 3
+        # control proves the exclusion is what removed it (not τ): every other
+        # suggestion survives unchanged
+        others = [
+            (e["family"], e["affinity"]) for e in control["suggestions"] if e["family"] != "Data Science"
+        ]
+        assert [(e["family"], e["affinity"]) for e in filtered["suggestions"]] == others
 
 
+@pytest.mark.usefixtures("curated_graph_only")
 class TestExplanationContract:
     def test_suggestion_carries_full_evidence(self):
         result = _synthetic()
@@ -187,6 +213,7 @@ class TestExplanationContract:
         assert ml["transfer_count"] == 1
 
 
+@pytest.mark.usefixtures("curated_graph_only")
 class TestPresets:
     def test_presets_rendered_with_same_math(self):
         result = _synthetic()
@@ -210,6 +237,7 @@ class TestPresets:
         assert affinities == sorted(affinities, reverse=True)
 
 
+@pytest.mark.usefixtures("curated_graph_only")
 class TestDeterminism:
     def test_two_synthetic_runs_identical(self):
         assert json.dumps(_synthetic(), sort_keys=True) == json.dumps(

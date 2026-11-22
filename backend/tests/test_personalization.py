@@ -101,10 +101,15 @@ def _profile_for(user_id) -> Profile:
 class TestWeightMath:
 
     def test_defaults_without_state(self):
-        """No state → global weights, no note, zero shrinkage."""
+        """No state → global weights, no note, zero shrinkage.
+
+        "Global" is the precedence chain learned artifact -> admin override ->
+        code defaults (runtime_config), so compare against it, not the
+        code defaults alone (which only apply when nothing else is set)."""
         with SessionLocal() as db:
             weights, note, shrink = m4.effective_weights(db, uuid4())
-        assert weights == DEFAULT_WEIGHTS
+            expected = m4.global_weights(db)
+        assert weights == expected
         assert note is None
         assert shrink == 0.0
 
@@ -140,15 +145,16 @@ class TestWeightMath:
             db.commit()
 
             weights, note, shrink = m4.effective_weights(db, profile.user_id)
+            global_w = m4.global_weights(db)
             assert set(weights) == COMPONENTS_8
             assert sum(weights.values()) == pytest.approx(1.0, abs=1e-6)
             # loose post-renorm envelope around the §16 bounds (documented:
             # clamping happens before renormalisation, so allow modest drift)
             for k, w in weights.items():
-                g = DEFAULT_WEIGHTS[k]
+                g = global_w[k]
                 assert 0.4 * g <= w <= 2.5 * g, f"{k}={w} escaped bounds"
             # the disliked high-salary item pulls the salary weight down
-            assert weights["salary"] < DEFAULT_WEIGHTS["salary"]
+            assert weights["salary"] < global_w["salary"]
             assert shrink > 0
             assert note is None or "weight" in note
 

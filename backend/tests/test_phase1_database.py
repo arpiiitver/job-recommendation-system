@@ -35,13 +35,15 @@ from app.services.scoring import score_pair
 
 
 class FakeEmbedder:
-    """Deterministic fake embedder producing normalized 384-d vectors without network."""
+    """Deterministic fake embedder producing normalized vectors without network
+    (768-d by default: the M0 BGE bi-encoder / pgvector column width)."""
 
-    def __init__(self, backend="fake_minilm", model_name="fake-model", dimension=384):
+    def __init__(self, backend="fake_minilm", model_name="fake-model", dimension=768):
         self.backend = backend
         self.model_name = model_name
         self.version = "v1"
         self.dimension = dimension
+        self.dim = dimension  # attribute the embedding service records as provenance
 
     def encode(self, texts: list[str]) -> np.ndarray:
         vecs = []
@@ -213,7 +215,7 @@ def test_sync_jsonb_to_structured_idempotent():
 # 3. Embedding Provenance & Separation Tests (Phase 1.3)
 # ---------------------------------------------------------------------------
 
-def test_embedding_provenance_and_separation():
+def test_embedding_provenance_and_separation(monkeypatch):
     """Verify that embeddings carry full provenance and incompatible spaces are never compared."""
     with SessionLocal() as db:
         user = User(email=f"emb_user_{uuid.uuid4().hex[:6]}@test.com", hashed_password="h")
@@ -237,7 +239,7 @@ def test_embedding_provenance_and_separation():
         ensure_profile_embedding(profile, embedder=embedder_a)
         assert profile.embedding_backend == "minilm"
         assert profile.embedding_model == "all-MiniLM-L6-v2"
-        assert profile.embedding_dimension == 384
+        assert profile.embedding_dimension == 768
         assert profile.embedding_content_hash is not None
 
         # Job 1 gets MiniLM embedding
@@ -253,6 +255,11 @@ def test_embedding_provenance_and_separation():
         assert is_compatible_embedding(profile, job2) is False
 
         # Scoring check via profile context
+        # _ProfileContext refreshes the profile vector with the *configured*
+        # embedder; pin it to embedder_a so the profile stays in A's space.
+        import app.services.embeddings as embeddings_mod
+
+        monkeypatch.setattr(embeddings_mod, "get_embedder", lambda: embedder_a)
         ctx = _ProfileContext(profile)
 
         # Compatible job: cosine is calculated

@@ -90,10 +90,16 @@ docker compose up -d
 - **Readiness:** http://localhost:8000/api/v1/health/ready
 - **Postgres (host):** `localhost:55432` (container listens on `5432` internally)
 
-### 4) Demo credentials (if present in DB)
+### 4) Demo data and credentials
+On a fresh database, seed the demo accounts and the golden job corpus (idempotent; CI runs this too):
+
+```powershell
+docker compose exec backend python -m scripts.seed_demo
+```
+
 - **Job seeker:** `aanya.seeker@example.com` / `Password123!`
-- **Employer:** `employer.qa@jobrec.io` / `Password123!`
-- **Admin:** `admin.qa@jobrec.io` / `Password123!`
+- **Employer:** `recruiter@technova.io` / `Password123!` (owns the seeded TechNova postings)
+- **Admin:** `admin.qa@jobrec.io` / `Password123!` (admin console: usage stats, reported listings, moderation)
 
 ## Common Docker commands
 
@@ -165,8 +171,10 @@ python ml/eval_bandit.py
 ## Testing
 
 ```powershell
-# Backend (example; configure DB/env for your setup)
+# Backend: migrate + seed a test database first (same as CI)
 cd backend
+alembic upgrade head
+python -m scripts.seed_demo
 python -m pytest tests -q
 
 # Frontend

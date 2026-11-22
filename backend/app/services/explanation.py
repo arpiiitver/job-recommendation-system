@@ -233,6 +233,12 @@ def readiness_from_score(score: float, *, already_calibrated: bool = False) -> d
 
     settings = get_settings()
     calibrated = float(score) / 100.0 if already_calibrated else predict_positive(float(score))
+    if calibrated is None:
+        # No calibrator artifact (or disabled): Phase-1 raw mapping on the
+        # formula score, low < 0.50 <= medium < 0.75 <= high — never a crash.
+        value = round(max(0.0, min(1.0, float(score) / 100.0)), 2)
+        band = "high" if value >= 0.75 else "medium" if value >= 0.50 else "low"
+        return {"value": value, "band": band}
     value = round(max(0.0, min(1.0, calibrated)), 2)
     if already_calibrated:
         from app.services.calibration import match_tier  # noqa: PLC0415

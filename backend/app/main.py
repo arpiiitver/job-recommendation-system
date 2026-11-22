@@ -38,7 +38,8 @@ def create_app() -> FastAPI:
     @application.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
         # simple in-memory rate limit (best-effort, per-process; prod can front with nginx/gateway)
-        limit = int(getattr(settings, "rate_limit_per_minute", 120) or 120)
+        # RATE_LIMIT_PER_MINUTE=0 disables it (the test suite does; one TestClient "IP")
+        limit = int(getattr(settings, "rate_limit_per_minute", 120))
         if limit > 0 and request.url.path.startswith("/api/"):
             ident = request.headers.get("x-forwarded-for") or (request.client.host if request.client else "unknown")
             key = f"{ident}:{request.url.path.split('/')[3] if len(request.url.path.split('/'))>3 else 'root'}"

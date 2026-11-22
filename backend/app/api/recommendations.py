@@ -19,7 +19,7 @@ from app.schemas.recommendation import (
     RecommendationFeedResponse,
 )
 from app.services import live_jobs, personalization
-from app.services.recommender import ContentRecommender, generate_candidates
+from app.services.recommender import ContentRecommender, InsufficientProfileError, generate_candidates
 from app.services.skill_gap_view import annotate as annotate_skill_gaps, load_seeker_skills
 
 log = logging.getLogger(__name__)
@@ -102,14 +102,27 @@ def build_recommendation_feed(
         db, profile.user_id
     )
     affinities = personalization.load_affinities(db, profile.id)
-    feed = ContentRecommender.recommend_jobs(
-        profile=profile,
-        jobs=candidates,
-        limit=limit,
-        weights=weights,
-        affinities=affinities,
-        personalization_note=m4_note,
-    )
+    try:
+        feed = ContentRecommender.recommend_jobs(
+            profile=profile,
+            jobs=candidates,
+            limit=limit,
+            weights=weights,
+            affinities=affinities,
+            personalization_note=m4_note,
+        )
+    except InsufficientProfileError:
+        # Brand-new account with nothing to rank on: an honest, empty
+        # cold-start feed (the UI asks for skills/resume) instead of a 500.
+        return (
+            RecommendationFeedResponse(
+                items=[],
+                total=0,
+                profile_completeness_score=ContentRecommender.compute_profile_completeness(profile),
+                recommendation_type="cold_start",
+            ),
+            profile,
+        )
     # Same skill-gap breakdown as search (incl. "learning" + transferable skills)
     annotate_skill_gaps(load_seeker_skills(db, current_user.id), [item.job for item in feed.items])
     return feed, profile

@@ -23,6 +23,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 GOLDEN = BACKEND / "ml" / "data" / "golden"
 DATASETS = BACKEND / "ml" / "datasets"
 ARTIFACTS = BACKEND / "ml" / "artifacts"
+REPORTS = BACKEND / "ml" / "reports"
 
 
 def _jsonl(path: Path) -> list[dict]:
@@ -126,17 +127,25 @@ def test_extraction_f1_gate():
     )
 
 
-def test_transfer_f1_gate():
-    from ml.evaluate import transfer_metrics
+def _report(name: str) -> dict:
+    path = REPORTS / name
+    assert path.exists(), f"{path.name} missing — run python ml/evaluate_all.py"
+    return json.loads(path.read_text(encoding="utf-8"))
 
-    report = transfer_metrics()
-    assert "skipped" not in report, report
-    assert report["vectors"] is True, (
-        "skill2vec artifact must be committed (python ml/train_skill2vec.py)"
-    )
-    assert report["f1"] >= 0.80, (
-        f"transfer F1 {report['f1']} < 0.80 gate: {report}"
-    )
+
+def test_skill_graph_heldout_gate():
+    """M1: held-out O*NET occupation->technology links (20% hidden per
+    occupation). The old golden transfer pairs are NOT used as a gate: they
+    were the clusters the previous model was trained on (circular)."""
+    m1 = _report("master_project_evaluation.json")["M1"]
+    assert m1["status"] == "ok"
+    gnn = json.loads((ARTIFACTS / "skillgraph_gnn_v7.json").read_text(encoding="utf-8"))
+    evals = gnn["evaluation"]
+    ours = evals["GraphSAGE (this model)"]["E1_link_prediction_test"]["auc"]
+    popularity = evals["Popularity (most-used tools)"]["E1_link_prediction_test"]["auc"]
+    assert ours >= 0.90, f"GraphSAGE held-out link AUC {ours} < 0.90"
+    assert ours > popularity, f"GraphSAGE {ours} must beat the popularity baseline {popularity}"
+    assert gnn["calibration"]["min_prob"] > 0
 
 
 def test_semantic_recall_gate():
@@ -150,54 +159,46 @@ def test_semantic_recall_gate():
     )
 
 
-def test_ranklet_beats_deterministic_gate():
-    if not sorted(ARTIFACTS.glob("ranklet_v*.txt")):
-        pytest.skip("ranklet not trained yet — run: python ml/train.py")
-    from ml.evaluate import ranking_report
-
-    report = ranking_report()
-    assert report is not None, "datasets missing — run python ml/train.py"
-    assert report["ranklet_trained"] is True
-    ranklet = report["metrics"]["ranklet"]["ndcg_at_10"]
-    deterministic = report["metrics"]["deterministic"]["ndcg_at_10"]
-    assert ranklet >= deterministic, (
-        f"ranklet NDCG@10 {ranklet} < deterministic {deterministic}"
-    )
+def test_ranker_beats_formula_gate():
+    """M2: DCN-v2 on held-out CareerBuilder users (later weeks) must beat the
+    hand-written weighted-sum formula on NDCG@10 and AUC."""
+    report = json.loads((ARTIFACTS / "dcn_ranker_v2.metrics.json").read_text(encoding="utf-8"))
+    assert report["reported_on"] == "test", "gate must use the held-out test split"
+    dcn, formula = report["dcn_v2"], report["baseline_heuristic"]
+    assert dcn["n_eval_queries"] >= 500
+    assert dcn["ndcg@10"] > formula["ndcg@10"] + 0.05, (dcn, formula)
+    assert dcn["auc_roc"] > formula["auc_roc"], (dcn, formula)
 
 
 def test_calibration_ece_gate():
-    if not sorted(ARTIFACTS.glob("calibrator_v*.joblib")):
-        pytest.skip("calibrator not trained yet — run: python ml/train.py")
-    from ml.evaluate import calibration_report
+    """M3: calibrator fitted on the validation week, ECE measured on the
+    held-out test week, must be well calibrated and no worse than raw."""
+    m3 = _report("master_project_evaluation.json")["M3"]
+    test = m3["held_out_test"]
+    assert test["n"] >= 1000
+    assert test["ece_after"] <= 0.05, f"held-out ECE {test['ece_after']} > 0.05"
+    assert test["ece_after"] <= test["ece_before"]
+    tiers = m3["match_tiers"]["test"]
+    # tiers must be ordered by real apply rate: top > strong > possible
+    assert tiers["top"]["apply_rate"] > tiers["strong"]["apply_rate"] > tiers["possible"]["apply_rate"]
 
-    report = calibration_report()
-    assert report is not None
-    assert report["ece"] <= 0.10, f"ECE {report['ece']} > 0.10 gate: {report}"
 
+def test_serving_artifacts_present_and_loadable():
+    """The models the app serves load from committed artifacts."""
+    import app.services.calibration as calibration
+    import app.services.rerank as rerank_mod
 
-def test_model_registry_has_trained_models():
-    """Plan §17: the model registry contains M1–M3 rows with metrics."""
-    import ml.ml_registry as registry
+    for pattern in ("dcn_ranker_v*.pt", "calibrator_v*.joblib", "skill2vec_v*.joblib"):
+        assert sorted(ARTIFACTS.glob(pattern)), f"missing serving artifact {pattern}"
 
-    expectations = [
-        ("skill2vec", "skill2vec_v*.joblib"),
-        ("ranklet", "ranklet_v*.txt"),
-        ("isotonic-calibrator", "calibrator_v*.joblib"),
-    ]
-    missing_artifacts = [
-        name for name, pattern in expectations
-        if not sorted(ARTIFACTS.glob(pattern))
-    ]
-    if missing_artifacts:
-        pytest.skip(f"artifacts missing ({missing_artifacts}) — run: python ml/train.py")
+    rerank_mod.reset_cache()
+    model, meta, version = rerank_mod._load_dcn()
+    assert model is not None and version, "committed DCN ranker must load for serving"
+    assert meta["feature_order"] == rerank_mod.FEATURE_ORDER
 
-    for name, _pattern in expectations:
-        row = registry.get_row(name)
-        assert row is not None, (
-            f"{name} missing from model_registry — run: python ml/train.py"
-        )
-        assert row["metrics"], f"{name} registry row has empty metrics"
-        assert row["artifact_path"]
+    calibration.load_calibrator.cache_clear()
+    p_low, p_high = calibration.predict_positive(20.0, logit=-3.0), calibration.predict_positive(80.0, logit=2.0)
+    assert p_low is not None and p_high is not None and 0.0 <= p_low <= p_high <= 1.0
 
     from app.core.config import get_settings
 
@@ -207,35 +208,14 @@ def test_model_registry_has_trained_models():
     assert settings.readiness_band_high > settings.readiness_band_medium
 
 
-def test_ranklet_manifest_feature_order_matches_serving():
-    if not sorted(ARTIFACTS.glob("ranklet_v*.manifest.json")):
-        pytest.skip("ranklet manifest missing — run: python ml/train.py")
-    from app.services.rerank import FEATURE_ORDER
-
-    manifest = json.loads(
-        sorted(ARTIFACTS.glob("ranklet_v*.manifest.json"))[-1].read_text(
-            encoding="utf-8"
-        )
-    )
-    assert manifest["feature_order"] == FEATURE_ORDER
-    assert "metrics" in manifest
-
-
 # ---------------------------------------------------------------------------
 # Feature vector contract + honest-degradation guards
 # ---------------------------------------------------------------------------
 
-def test_feature_vector_deterministic_and_manifest_sized():
+def test_feature_vector_deterministic_and_serving_sized():
     from app.models.enums import ExperienceLevel, ProficiencyLevel
-    from app.services.rerank import (
-        FEATURE_ORDER,
-        FeatureContext,
-        build_features,
-        component_vector,
-    )
-    from app.services.scoring import JobSkillReq, score_pair
-
-    from app.services.scoring import ComponentInputs  # noqa: PLC0415
+    from app.services.rerank import FEATURE_ORDER, FeatureContext, build_features
+    from app.services.scoring import ComponentInputs, JobSkillReq, score_pair
 
     inputs = ComponentInputs(
         seeker_skills={"python": (ProficiencyLevel.ADVANCED, 3.0)},
@@ -253,45 +233,44 @@ def test_feature_vector_deterministic_and_manifest_sized():
     v1 = build_features(inputs, result, ctx)
     v2 = build_features(inputs, result, ctx)
     assert v1 == v2, "feature build must be deterministic"
-    assert len(v1) == len(FEATURE_ORDER) == 30
+    assert len(v1) == len(FEATURE_ORDER) == 31
+    assert len(set(FEATURE_ORDER)) == len(FEATURE_ORDER), "feature names must be unique"
     assert all(isinstance(x, (int, float)) and math.isfinite(x) for x in v1)
-    assert len(component_vector(result)) == 30
-    # required coverage: python held → 1.0; kubernetes missing → 0.0
-    assert v1[FEATURE_ORDER.index("required_coverage")] == pytest.approx(0.5)
-    assert v1[FEATURE_ORDER.index("semantic_cosine_raw")] == pytest.approx(0.77)
+    # required coverage: python held, kubernetes missing -> 0.5
+    assert v1[FEATURE_ORDER.index("required_coverage_ratio")] == pytest.approx(0.5)
+    assert v1[FEATURE_ORDER.index("raw_bi_encoder_cosine")] == pytest.approx(0.77)
+    assert v1[FEATURE_ORDER.index("job_age_days")] == pytest.approx(3.5)
 
 
-def test_ranklet_manifest_mismatch_degrades_honestly():
-    """A manifest whose feature_order differs must block loading (→ deterministic)."""
+def test_dcn_feature_order_mismatch_degrades_honestly():
+    """A ranker trained on a different feature order must not load (rows are
+    built positionally) — serving then falls back instead of mis-scoring."""
+    import torch
+
     import app.services.rerank as rerank_mod
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        (tmp_path / "ranklet_v9.txt").write_text("dummy model", encoding="utf-8")
-        (tmp_path / "ranklet_v9.manifest.json").write_text(
-            json.dumps({"feature_order": ["wrong_feature"]}), encoding="utf-8"
+        torch.save(
+            {"feature_order": ["wrong_feature"], "state_dict": {}, "version": "v99"},
+            tmp_path / "dcn_ranker_v99.pt",
         )
         original = rerank_mod.ARTIFACT_DIR
         rerank_mod.ARTIFACT_DIR = tmp_path
         rerank_mod.reset_cache()
         try:
-            booster, version, order = rerank_mod._load_lgbm()
-            assert booster is None and version is None and order is None
+            assert rerank_mod._load_dcn() == (None, None, None)
         finally:
             rerank_mod.ARTIFACT_DIR = original
             rerank_mod.reset_cache()
 
 
-def test_ranklet_artifact_exists_and_loads_with_matching_manifest():
-    candidates = sorted(ARTIFACTS.glob("ranklet_v*.txt"))
-    if not candidates:
-        pytest.skip("ranklet not trained yet — run: python ml/train.py")
+def test_legacy_ranklet_is_not_served():
+    """The old synthetic-label LightGBM ranklet (30 legacy features) is kept
+    only for history: its manifest no longer matches serving, so it must be
+    skipped rather than loaded with misaligned features."""
     import app.services.rerank as rerank_mod
 
     rerank_mod.reset_cache()
-    booster, version, order = rerank_mod._load_lgbm()
-    assert booster is not None, "committed ranklet must load for serving"
-    assert version is not None
-    from app.services.rerank import FEATURE_ORDER  # noqa: PLC0415
-
-    assert order == FEATURE_ORDER
+    booster, version, _order = rerank_mod._load_lgbm()
+    assert booster is None and version is None

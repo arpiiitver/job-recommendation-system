@@ -15,6 +15,11 @@ import app.services.llm.provider as provider_mod
 from app.core.config import get_settings
 
 
+# The global per-IP limiter (120 req/min) would 429 the suite: every request
+# comes from the same TestClient address. Route-level AI limits stay active.
+get_settings().rate_limit_per_minute = 0
+
+
 @pytest.fixture(autouse=True)
 def _llm_test_mode():
     settings = get_settings()
