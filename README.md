@@ -10,6 +10,11 @@ JobRec is a full-stack job recommendation and career-path platform built with **
 - **Job discovery & recommendations:** candidate generation + learned ranking + calibrated match scores
 - **Live jobs:** query-time **Adzuna** results are fetched and merged into search/recommendation flows (transient `adzuna-*` listings, external apply). Native employer-posted jobs are supported in-app.
 - **Career intelligence:** skill-gap analysis, roadmap generation, simulator, resume optimization, and profile-driven personalization
+- **Skill gaps everywhere:** every job in search, AI search and recommendations shows your gap (have / learning / transferable / missing), live listings included
+- **Career goals (role/domain switchers):** profile form for target roles, interests and skills being learned; recommendations and the live feed follow these goals
+- **Employer portal (`/hiring`):** company profile, post/edit/publish/close/duplicate postings, applicant pipeline per posting (applied → hired), talent matching, insights, what-if; dashboard with a hiring funnel across all postings, applicants awaiting review and recent hires
+- **Admin console (`/admin`):** live usage (online now, active today/week/month), users, employers, applications, hires and hire rate, AI/ops metrics, scoring weights
+- **Trust & safety:** job seekers can report a listing (scam, fee, misleading, …); one report per user, listings reported by 2+ users are prioritised in the admin "Reported by users" queue; admins remove (archived + locked — the employer cannot republish), dismiss or restore; heuristic suspicious-listing/employer scans
 - **Auth/roles:** job seeker, employer, admin flows
 - **Frontend UX (current):** yellow/blue high-visibility theme, no signup questionnaire (register → dashboard), no Tracker/Settings tabs, in-app job detail modal for live listings, local save support for external (Adzuna) jobs, currency-aware salary display (₹ for Indian listings, appropriate symbols by currency/location)
 
@@ -188,7 +193,7 @@ npm run build
 ## Database migrations
 
 - Alembic versions: `backend/alembic/versions/`
-- Current migration chain in this repo includes M0/traceability revisions through **`0014_phase2_traceability`**
+- Current migration chain runs linearly through **`0018_job_reports`** (`0015_career_goals` → `0016_copilot` → `0017_admin_trust` → `0018_job_reports` on top of `0014_phase2_traceability`)
 - Docker startup applies migrations automatically; for local runs use `alembic upgrade head`
 
 ## Additional docs
