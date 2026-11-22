@@ -638,3 +638,179 @@ def suspicious_employers(
         "scanned": len(rows),
         "items": items[:limit],
     }
+
+
+# ---------------------------------------------------------------------------
+# Listings reported by users (seeker reports -> admin decision)
+# ---------------------------------------------------------------------------
+
+
+class ReportActionRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=2000)
+
+
+def _report_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=getattr(exc, "status_code", 400), detail=str(exc))
+
+
+@router.get("/moderation/reported-jobs")
+def reported_jobs(
+    _: AdminDep,
+    db: DbDep,
+    min_reporters: Annotated[int, Query(ge=1, le=50)] = 1,
+    include_closed: Annotated[bool, Query()] = False,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """Jobs with user reports, most-reported first.
+
+    ``reporters`` counts distinct users with an OPEN report; listings at or
+    above ``multi_report_threshold`` are the "flagged by multiple users" set.
+    With ``include_closed`` the history (removed/dismissed) is listed too.
+    """
+    from app.services.job_reports import MULTI_REPORT_THRESHOLD, USER_REPORT
+
+    conditions = [
+        ModerationFlag.target_type == FlagTargetType.JOB,
+        ModerationFlag.origin == USER_REPORT,
+    ]
+    if not include_closed:
+        conditions.append(ModerationFlag.status == FlagStatus.OPEN)
+    flags = list(
+        db.scalars(select(ModerationFlag).where(*conditions).order_by(ModerationFlag.created_at.desc())).all()
+    )
+
+    grouped: dict[UUID, list[ModerationFlag]] = {}
+    for flag in flags:
+        grouped.setdefault(flag.target_id, []).append(flag)
+    job_ids = list(grouped)
+    jobs = (
+        {
+            j.id: (j, c, o)
+            for j, c, o in db.execute(
+                select(Job, Company, User)
+                .outerjoin(Company, Company.id == Job.company_id)
+                .outerjoin(User, User.id == Job.posted_by_user_id)
+                .where(Job.id.in_(job_ids))
+            ).all()
+        }
+        if job_ids
+        else {}
+    )
+    application_counts = (
+        dict(
+            db.execute(
+                select(Application.job_id, func.count(Application.id))
+                .where(Application.job_id.in_(job_ids))
+                .group_by(Application.job_id)
+            ).all()
+        )
+        if job_ids
+        else {}
+    )
+    skill_counts = (
+        dict(
+            db.execute(
+                select(JobSkill.job_id, func.count()).where(JobSkill.job_id.in_(job_ids)).group_by(JobSkill.job_id)
+            ).all()
+        )
+        if job_ids
+        else {}
+    )
+    emails = _flag_emails(db, flags)
+
+    items = []
+    for job_id, job_flags in grouped.items():
+        open_flags = [f for f in job_flags if f.status == FlagStatus.OPEN]
+        reporters = len({f.created_by_user_id for f in open_flags if f.created_by_user_id})
+        if reporters < min_reporters and not include_closed:
+            continue
+        reasons: dict[str, int] = {}
+        for f in open_flags or job_flags:
+            reasons[f.reason] = reasons.get(f.reason, 0) + 1
+        job, company, owner = jobs.get(job_id, (None, None, None))
+        risk_score, risk_reasons = (0, [])
+        if job is not None:
+            risk_score, risk_reasons = job_signals(
+                job,
+                company=company,
+                owner=owner,
+                skill_count=int(skill_counts.get(job_id, 0)),
+                application_count=int(application_counts.get(job_id, 0)),
+                open_flags=len(open_flags),
+                native=(job.source or "").lower() == "native",
+            )
+        items.append(
+            {
+                "job_id": str(job_id),
+                "title": job.title if job else (job_flags[0].target_label or "Deleted listing"),
+                "exists": job is not None,
+                "status": job.status.value if job else None,
+                "source": job.source if job else None,
+                "location": job.location if job else None,
+                "removed_at": _iso(job.moderation_removed_at) if job else None,
+                "removal_note": job.moderation_note if job else None,
+                "applicants": int(application_counts.get(job_id, 0)),
+                "company": (
+                    {"id": str(company.id), "name": company.name, "is_verified": company.is_verified}
+                    if company
+                    else None
+                ),
+                "owner": (
+                    {"id": str(owner.id), "email": owner.email, "is_active": owner.is_active} if owner else None
+                ),
+                "reporters": reporters,
+                "open_reports": len(open_flags),
+                "total_reports": len(job_flags),
+                "multi_reported": reporters >= MULTI_REPORT_THRESHOLD,
+                "reasons": [{"reason": r, "count": n} for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])],
+                "first_reported_at": _iso(min(f.created_at for f in job_flags)),
+                "last_reported_at": _iso(max(f.created_at for f in job_flags)),
+                "reports": [_flag_dict(f, emails) for f in job_flags[:8]],
+                "risk_score": risk_score,
+                "risk_reasons": risk_reasons,
+            }
+        )
+
+    items.sort(key=lambda it: (-it["reporters"], -it["risk_score"], it["last_reported_at"] or ""), reverse=False)
+    return {
+        "multi_report_threshold": MULTI_REPORT_THRESHOLD,
+        "total": len(items),
+        "multi_reported": sum(1 for it in items if it["multi_reported"]),
+        "items": items[:limit],
+    }
+
+
+@router.post("/moderation/reported-jobs/{job_id}/remove")
+def remove_reported_job(job_id: UUID, payload: ReportActionRequest, admin: AdminDep, db: DbDep) -> dict[str, Any]:
+    """Take the listing down (archived + locked) and resolve its open reports."""
+    from app.services import job_reports as svc
+
+    try:
+        job, closed = svc.remove_job(db, admin, job_id, payload.note)
+    except svc.ReportError as exc:
+        raise _report_error(exc) from exc
+    return {"status": "removed", "job_id": str(job.id), "job_status": job.status.value, "reports_resolved": closed}
+
+
+@router.post("/moderation/reported-jobs/{job_id}/dismiss")
+def dismiss_reported_job(job_id: UUID, payload: ReportActionRequest, admin: AdminDep, db: DbDep) -> dict[str, Any]:
+    """Keep the listing; mark its open reports as dismissed."""
+    from app.services import job_reports as svc
+
+    try:
+        closed = svc.dismiss_reports(db, admin, job_id, payload.note)
+    except svc.ReportError as exc:
+        raise _report_error(exc) from exc
+    return {"status": "dismissed", "job_id": str(job_id), "reports_dismissed": closed}
+
+
+@router.post("/moderation/reported-jobs/{job_id}/restore")
+def restore_removed_job(job_id: UUID, admin: AdminDep, db: DbDep) -> dict[str, Any]:
+    """Undo a removal: lift the moderation lock and republish."""
+    from app.services import job_reports as svc
+
+    try:
+        job = svc.restore_job(db, admin, job_id, publish=True)
+    except svc.ReportError as exc:
+        raise _report_error(exc) from exc
+    return {"status": "restored", "job_id": str(job.id), "job_status": job.status.value}

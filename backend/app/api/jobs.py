@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -28,6 +29,8 @@ from app.services import live_jobs, nl_search
 from app.services.ingest import detect_fresher
 from app.services.skill_gap_view import annotate as annotate_skill_gaps, load_seeker_skills
 from app.services.skill_normalizer import build_db_normalizer, resolve_skill
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["jobs"])
 
@@ -95,6 +98,23 @@ def _collect_live_by_level(
     return out
 
 
+def ensure_not_moderation_locked(job, user, new_status) -> None:
+    """Postings an admin removed stay down until an admin restores them."""
+    from app.models.enums import JobStatus as _JobStatus
+
+    if (
+        getattr(job, "moderation_removed_at", None) is not None
+        and new_status in (_JobStatus.PUBLISHED, _JobStatus.DRAFT)
+        and user.role != UserRole.ADMIN
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This posting was removed by our moderation team"
+            + (f": {job.moderation_note}" if job.moderation_note else ".")
+            + " It cannot be republished. Contact support if you think this is a mistake.",
+        )
+
+
 def _format_job_response(
     job: Job,
     applicant_count: int = 0,
@@ -138,6 +158,8 @@ def _format_job_response(
         family=job.family.name if job.family is not None else None,
         external_url=job.external_url,
         source=getattr(job, "source", None) or "native",
+        moderation_removed_at=getattr(job, "moderation_removed_at", None),
+        moderation_note=getattr(job, "moderation_note", None),
     )
 
 
@@ -562,7 +584,20 @@ def nl_search_jobs(
     editable chips — the user, not the LLM, is the final authority.  Any LLM
     failure degrades to full-text search (`mode: "fts"`).
     """
-    filters, mode = nl_search.parse_query(q)
+    from app.services.llm import LlmStrictError  # noqa: PLC0415
+
+    try:
+        filters, mode = nl_search.parse_query(q)
+    except LlmStrictError:
+        raise  # LLM_STRICT=true: surfaced as 502 with the reason (app.main)
+    except Exception as exc:  # noqa: BLE001 - provider missing / quota / network
+        # AI search is AI-only by design (no silent keyword fallback); tell the
+        # user plainly instead of failing with a 500.
+        log.warning("NL search unavailable: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI search is unavailable right now — please use the keyword search instead.",
+        ) from exc
     if filters.experience_level is None and detect_fresher(q):
         # don't rely on the LLM alone for the most common Indian phrasing
         filters = filters.model_copy(update={"experience_level": ExperienceLevel.ENTRY})
@@ -712,6 +747,7 @@ def update_job(
     if payload.salary_currency is not None:
         job.salary_currency = payload.salary_currency.upper()
     if payload.status is not None:
+        ensure_not_moderation_locked(job, current_user, payload.status)
         job.status = payload.status
     if payload.family is not None:
         raw_family = payload.family.strip()
@@ -801,11 +837,16 @@ def get_employer_jobs(
         .order_by(Job.created_at.desc())
     ).all()
 
+    from app.services.job_reports import open_report_counts
+
+    reports = open_report_counts(db, [j.id for j in jobs])
     result: list[JobDetailResponse] = []
     for j in jobs:
         count = db.scalar(
             select(func.count(Application.id)).where(Application.job_id == j.id)
         ) or 0
-        result.append(_format_job_response(j, applicant_count=count))
+        item = _format_job_response(j, applicant_count=count)
+        item.open_reports = reports.get(j.id, 0)
+        result.append(item)
 
     return result

@@ -19,6 +19,8 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Flag,
+  ShieldAlert,
   MapPin,
   Pencil,
   PlusCircle,
@@ -198,6 +200,7 @@ export default function PostingsPage() {
           {visible.map((job) => {
             const busy = busyId === job.id;
             const isOpen = job.status === "published";
+            const locked = !!job.moderation_removed_at && !isAdmin;
             return (
               <div
                 key={job.id}
@@ -218,7 +221,22 @@ export default function PostingsPage() {
                           {job.family}
                         </span>
                       )}
+                      {job.moderation_removed_at ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold text-rose-300">
+                          <ShieldAlert className="h-3 w-3" /> Removed by moderation
+                        </span>
+                      ) : (job.open_reports ?? 0) > 0 ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300"
+                          title="Job seekers reported this posting; our team is reviewing it."
+                        >
+                          <Flag className="h-3 w-3" /> Under review
+                        </span>
+                      ) : null}
                     </div>
+                    {job.moderation_removed_at && job.moderation_note && (
+                      <p className="mt-1 text-xs text-rose-300/80">Reason: {job.moderation_note}</p>
+                    )}
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
                       <span className="inline-flex items-center gap-1">
                         <MapPin className="h-3 w-3" />
@@ -256,7 +274,7 @@ export default function PostingsPage() {
                       Edit
                     </Link>
 
-                    {isOpen ? (
+                    {locked ? null : isOpen ? (
                       <button
                         type="button"
                         disabled={busy}

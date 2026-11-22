@@ -153,6 +153,17 @@ class Job(Base):
         nullable=True,
     )
     search_vector = mapped_column(TSVECTOR, nullable=True)
+    # Trust & safety lock (migration 0018): set when an admin removes the
+    # posting. The employer cannot republish it; only an admin can restore.
+    # FK lives in the DB only — declaring it here would make the
+    # posted_by <-> User.posted_jobs relationship ambiguous.
+    moderation_removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    moderation_removed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    moderation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

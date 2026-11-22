@@ -76,6 +76,13 @@ class ModerationFlag(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # "admin" (raised in the admin console) | "user_report" (seeker reported a listing)
+    origin: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="admin",
+        server_default="admin",
+    )
     resolution_note: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

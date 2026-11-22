@@ -81,6 +81,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import AdminReportedJobs from "@/components/admin-reported-jobs";
 
 const TABS = [
   { id: "pulse", label: "Pulse", icon: LayoutDashboard },
@@ -1060,7 +1061,7 @@ export default function AdminPage() {
                 <StatCard
                   label="Open flags"
                   value={fmt(overview.moderation.open_flags)}
-                  detail={`${fmt(overview.moderation.high_severity_flags)} high severity · ${fmt(overview.moderation.resolved_last_7d)} resolved this week`}
+                  detail={`${fmt(overview.moderation.multi_reported_jobs ?? 0)} listings reported by ${overview.moderation.multi_report_threshold ?? 2}+ users · ${fmt(overview.moderation.high_severity_flags)} high severity`}
                   icon={ShieldAlert}
                   accent={openFlags > 0 ? "text-rose-400" : "text-zinc-500"}
                 />
@@ -1207,6 +1208,13 @@ export default function AdminPage() {
                     <MetricRow label="Open flags" value={fmt(overview.moderation.open_flags)} tone={openFlags > 0 ? "text-rose-300" : "text-zinc-200"} />
                     <MetricRow label="High severity" value={fmt(overview.moderation.high_severity_flags)} tone="text-rose-300" />
                     <MetricRow label="Flagged jobs" value={fmt(overview.moderation.flagged_jobs)} />
+                    <MetricRow label="Reported by users" value={fmt(overview.moderation.user_reported_jobs ?? 0)} />
+                    <MetricRow
+                      label={`Reported by ${overview.moderation.multi_report_threshold ?? 2}+ users`}
+                      value={fmt(overview.moderation.multi_reported_jobs ?? 0)}
+                      tone={(overview.moderation.multi_reported_jobs ?? 0) > 0 ? "text-rose-300" : "text-zinc-200"}
+                    />
+                    <MetricRow label="Listings removed" value={fmt(overview.moderation.removed_jobs ?? 0)} />
                     <MetricRow label="Flagged employers" value={fmt(overview.moderation.flagged_companies)} />
                     <MetricRow label="Flagged accounts" value={fmt(overview.moderation.flagged_users)} />
                     <MetricRow label="Resolved last 7d" value={fmt(overview.moderation.resolved_last_7d)} tone="text-emerald-300" />
@@ -1727,6 +1735,16 @@ export default function AdminPage() {
       {/* ---------------- Moderation ---------------- */}
       {activeTab === "moderation" && (
         <div className="mt-6 space-y-6">
+          {token && (
+            <AdminReportedJobs
+              token={token}
+              onChanged={() => {
+                void loadBootstrap(true);
+                void loadModeration();
+              }}
+            />
+          )}
+
           <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>

@@ -65,3 +65,8 @@ api_router.include_router(llm_curation_router)
 from app.api.copilot import router as copilot_router  # noqa: E402
 
 api_router.include_router(copilot_router)
+
+# ---- Trust & safety: users report listings (admin queue in admin_moderation) ----
+from app.api.job_reports import router as job_reports_router  # noqa: E402
+
+api_router.include_router(job_reports_router)

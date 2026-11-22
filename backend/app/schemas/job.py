@@ -101,6 +101,11 @@ class JobDetailResponse(BaseModel):
     project_relevance: str | None = None
     # per-seeker skill gap (search, AI search, recommendations; live jobs too)
     skill_gap: SkillGapSummary | None = None
+    # Trust & safety (employer views): set when an admin removed the posting
+    moderation_removed_at: datetime | None = None
+    moderation_note: str | None = None
+    # Distinct users with an open report on this posting (employer listing only)
+    open_reports: int | None = None
     # Real posting URL (Adzuna /details/<id> or the employer's own page) so the
     # UI can send the seeker to the live opening.  None for native postings,
     # which are applied to in-app.

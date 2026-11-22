@@ -3,20 +3,75 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { getEmployerJobs, getMyCompany } from "@/lib/api";
-import { CompanyDetail, JobDetail } from "@/lib/types";
+import { getEmployerJobs, getEmployerOverview, getMyCompany } from "@/lib/api";
+import { CompanyDetail, EmployerOverview, JobDetail } from "@/lib/types";
 import { formatSalary } from "@/lib/format";
 import { EmployerLoading, useEmployerAuth } from "@/lib/use-employer-auth";
 import { StatusPill } from "@/components/status-pill";
 import {
   AlertTriangle,
   ArrowRight,
+  Award,
   Building2,
+  Clock,
   FileText,
+  Flag,
   MapPin,
   PlusCircle,
+  ShieldAlert,
   Users,
 } from "lucide-react";
+
+const FUNNEL: { key: "applied" | "shortlisted" | "interview" | "offer" | "hired"; label: string; bar: string }[] = [
+  { key: "applied", label: "Applied", bar: "bg-zinc-500" },
+  { key: "shortlisted", label: "Shortlisted", bar: "bg-amber-400" },
+  { key: "interview", label: "Interview", bar: "bg-indigo-400" },
+  { key: "offer", label: "Offer", bar: "bg-emerald-400" },
+  { key: "hired", label: "Hired", bar: "bg-teal-400" },
+];
+
+/** Applied -> hired funnel across every posting ("reached at least this stage"). */
+function HiringFunnel({ overview }: { overview: EmployerOverview }) {
+  const total = overview.total_applicants;
+  const values: Record<string, number> = {
+    applied: total,
+    shortlisted: Math.round((overview.conversion.shortlisted / 100) * total),
+    interview: Math.round((overview.conversion.interview / 100) * total),
+    offer: Math.round((overview.conversion.offer / 100) * total),
+    hired: overview.counts.hired ?? 0,
+  };
+  return (
+    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-zinc-200">Hiring funnel · all postings</h2>
+        <span className="text-xs text-zinc-500">
+          {overview.new_7d} new in the last 7 days · {overview.counts.rejected} rejected
+        </span>
+      </div>
+      {total === 0 ? (
+        <p className="mt-4 text-xs text-zinc-500">No applications yet — they will show up here as candidates apply.</p>
+      ) : (
+        <div className="mt-4 space-y-2.5">
+          {FUNNEL.map((stage) => {
+            const n = values[stage.key];
+            const pct = total ? Math.round((100 * n) / total) : 0;
+            return (
+              <div key={stage.key} className="grid grid-cols-[6.5rem_1fr_4.5rem] items-center gap-3 text-xs">
+                <span className="text-zinc-400">{stage.label}</span>
+                <div className="h-2.5 overflow-hidden rounded-full bg-zinc-800">
+                  <div className={`h-full rounded-full ${stage.bar}`} style={{ width: `${Math.max(pct, n > 0 ? 3 : 0)}%` }} />
+                </div>
+                <span className="text-right font-semibold text-zinc-200">
+                  {n} <span className="font-normal text-zinc-500">({pct}%)</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function KpiCard({
   label,
@@ -56,6 +111,7 @@ export default function HiringOverviewPage() {
   const { user } = useAuth();
   const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [company, setCompany] = useState<CompanyDetail | null>(null);
+  const [overview, setOverview] = useState<EmployerOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,11 +121,13 @@ export default function HiringOverviewPage() {
     Promise.all([
       getEmployerJobs(token),
       getMyCompany(token).catch(() => null), // employer may have no company yet
+      getEmployerOverview(token).catch(() => null),
     ])
-      .then(([jobList, comp]) => {
+      .then(([jobList, comp, ov]) => {
         if (cancelled) return;
         setJobs(jobList);
         setCompany(comp);
+        setOverview(ov);
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load"))
       .finally(() => !cancelled && setLoading(false));
@@ -85,6 +143,8 @@ export default function HiringOverviewPage() {
   const closed = jobs.filter((j) => j.status === "closed" || j.status === "archived");
   const totalApplicants = jobs.reduce((sum, j) => sum + (j.applicant_count ?? 0), 0);
   const noApplicants = published.filter((j) => (j.applicant_count ?? 0) === 0);
+  const removed = jobs.filter((j) => !!j.moderation_removed_at);
+  const reported = jobs.filter((j) => !j.moderation_removed_at && (j.open_reports ?? 0) > 0);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
@@ -139,24 +199,24 @@ export default function HiringOverviewPage() {
         />
         <KpiCard
           label="Applicants"
-          value={loading ? "…" : totalApplicants}
-          hint="Across all postings"
+          value={loading ? "…" : overview?.total_applicants ?? totalApplicants}
+          hint={overview ? `${overview.new_7d} new this week` : "Across all postings"}
           icon={<Users className="h-4 w-4" />}
           tone="zinc"
         />
         <KpiCard
-          label="Drafts"
-          value={loading ? "…" : drafts.length}
-          hint="Not yet published"
-          icon={<FileText className="h-4 w-4" />}
+          label="Awaiting review"
+          value={loading ? "…" : overview?.waiting_review ?? 0}
+          hint="Applications you have not opened yet"
+          icon={<Clock className="h-4 w-4" />}
           tone="amber"
         />
         <KpiCard
-          label="Closed / archived"
-          value={loading ? "…" : closed.length}
-          hint="No longer receiving applicants"
-          icon={<FileText className="h-4 w-4" />}
-          tone="zinc"
+          label="Hired"
+          value={loading ? "…" : overview?.counts.hired ?? 0}
+          hint={`${drafts.length} drafts · ${closed.length} closed / archived`}
+          icon={<Award className="h-4 w-4" />}
+          tone="teal"
         />
       </div>
 
@@ -176,6 +236,100 @@ export default function HiringOverviewPage() {
         </div>
       )}
 
+      {/* Moderation: removed or reported postings */}
+      {!loading && removed.length > 0 && (
+        <div className="mt-6 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+            <ShieldAlert className="h-4 w-4 text-rose-400" />
+            {removed.length} posting{removed.length > 1 ? "s were" : " was"} removed by our moderation team
+          </div>
+          <ul className="mt-2 space-y-1 text-xs text-rose-200/80">
+            {removed.map((j) => (
+              <li key={j.id}>
+                <span className="font-semibold">{j.title}</span>
+                {j.moderation_note ? ` — ${j.moderation_note}` : ""}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-rose-200/60">
+            Removed postings are hidden from job seekers and cannot be republished. Contact support if
+            you believe this is a mistake.
+          </p>
+        </div>
+      )}
+      {!loading && reported.length > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-amber-200">
+            <Flag className="h-4 w-4 text-amber-400" />
+            {reported.length} posting{reported.length > 1 ? "s have" : " has"} been reported by job seekers
+          </div>
+          <p className="mt-1 text-xs text-amber-200/70">
+            Our team is reviewing: {reported.map((j) => j.title).join(", ")}. Make sure pay, location and
+            requirements are accurate, and never ask candidates for fees.
+          </p>
+        </div>
+      )}
+
+      {/* Funnel + who is waiting on you */}
+      {!loading && overview && (
+        <div className="mt-6 grid gap-4 lg:grid-cols-5">
+          <div className="lg:col-span-3">
+            <HiringFunnel overview={overview} />
+          </div>
+          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-5 lg:col-span-2">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-200">
+                <Clock className="h-4 w-4 text-amber-400" /> Waiting for your review
+              </h2>
+              <span className="text-xs text-zinc-500">{overview.waiting_review} total</span>
+            </div>
+            {overview.needs_review.length === 0 ? (
+              <p className="mt-4 text-xs text-zinc-500">You are all caught up.</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-zinc-800/60">
+                {overview.needs_review.map((a) => (
+                  <li key={a.application_id}>
+                    <Link
+                      href={`/hiring/postings/${a.job_id}/applicants`}
+                      className="flex items-center justify-between gap-3 py-2 text-xs hover:text-teal-300"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-zinc-100">{a.candidate_name}</span>
+                        <span className="block truncate text-zinc-500">
+                          {a.headline ? `${a.headline} · ` : ""}
+                          {a.job_title}
+                        </span>
+                      </span>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          a.days_waiting >= 7 ? "bg-rose-500/10 text-rose-300" : "bg-zinc-800 text-zinc-400"
+                        }`}
+                      >
+                        {a.days_waiting === 0 ? "today" : `${a.days_waiting}d`}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {overview.recent_hires.length > 0 && (
+              <div className="mt-4 border-t border-zinc-800/60 pt-3">
+                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-teal-400">
+                  <Award className="h-3.5 w-3.5" /> Recent hires
+                </p>
+                <ul className="mt-1.5 space-y-1 text-xs text-zinc-300">
+                  {overview.recent_hires.map((h) => (
+                    <li key={h.application_id} className="truncate">
+                      {h.candidate_name} <span className="text-zinc-500">· {h.job_title}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Postings needing attention */}
       {!loading && noApplicants.length > 0 && (
         <div className="mt-6 rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4">
@@ -185,8 +339,17 @@ export default function HiringOverviewPage() {
             {noApplicants.length > 1 ? "s have" : " has"} no applicants yet
           </div>
           <p className="mt-1 text-xs text-zinc-500">
-            These are live but unseen. In later phases you&apos;ll see match-density and market
-            feedback here to help them perform.
+            Open a posting&apos;s <span className="text-zinc-300">Talent</span> tab to see matching candidates, or{" "}
+            <span className="text-zinc-300">What-if</span> to see how relaxing a requirement widens your reach:{" "}
+            {noApplicants.slice(0, 3).map((j, i) => (
+              <span key={j.id}>
+                {i > 0 && ", "}
+                <Link href={`/hiring/postings/${j.id}/talent`} className="text-teal-400 hover:text-teal-300">
+                  {j.title}
+                </Link>
+              </span>
+            ))}
+            {noApplicants.length > 3 ? "…" : ""}
           </p>
         </div>
       )}

@@ -235,6 +235,27 @@ def overview(_: AdminDep, db: DbDep) -> dict[str, Any]:
             ModerationFlag.target_type == FlagTargetType.COMPANY,
         )
     )
+    # User reports: listings reported by >= MULTI_REPORT_THRESHOLD distinct people
+    from app.services.job_reports import MULTI_REPORT_THRESHOLD, USER_REPORT
+
+    reporters_per_job = (
+        select(
+            ModerationFlag.target_id,
+            func.count(func.distinct(ModerationFlag.created_by_user_id)).label("n"),
+        )
+        .where(
+            ModerationFlag.status == FlagStatus.OPEN,
+            ModerationFlag.target_type == FlagTargetType.JOB,
+            ModerationFlag.origin == USER_REPORT,
+        )
+        .group_by(ModerationFlag.target_id)
+        .subquery()
+    )
+    user_reported_jobs = count(select(func.count()).select_from(reporters_per_job))
+    multi_reported_jobs = count(
+        select(func.count()).select_from(reporters_per_job).where(reporters_per_job.c.n >= MULTI_REPORT_THRESHOLD)
+    )
+    removed_jobs = count(select(func.count(Job.id)).where(Job.moderation_removed_at.is_not(None)))
     flagged_users = count(
         select(func.count(func.distinct(ModerationFlag.target_id))).where(
             ModerationFlag.status == FlagStatus.OPEN,
@@ -322,6 +343,10 @@ def overview(_: AdminDep, db: DbDep) -> dict[str, Any]:
             "flagged_companies": flagged_companies,
             "flagged_users": flagged_users,
             "resolved_last_7d": resolved_last_7d,
+            "user_reported_jobs": user_reported_jobs,
+            "multi_reported_jobs": multi_reported_jobs,
+            "multi_report_threshold": MULTI_REPORT_THRESHOLD,
+            "removed_jobs": removed_jobs,
         },
         "skills": {
             "total": count(select(func.count(Skill.id))),
@@ -598,15 +623,21 @@ def list_jobs(
 def update_job_status(
     job_id: UUID,
     payload: JobStatusUpdateRequest,
-    _: AdminDep,
+    admin: AdminDep,
     db: DbDep,
 ) -> dict[str, Any]:
-    """Moderate a posting by moving it between draft/published/closed/archived."""
+    """Moderate a posting by moving it between draft/published/closed/archived.
+
+    Taking a posting down locks it (the employer cannot republish);
+    publishing it again lifts the lock."""
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Job posting not found."
         )
+    from app.services.job_reports import lock_on_admin_status_change
+
+    lock_on_admin_status_change(job, admin, payload.status)
     job.status = payload.status
     job.updated_at = datetime.now(timezone.utc)
     db.commit()

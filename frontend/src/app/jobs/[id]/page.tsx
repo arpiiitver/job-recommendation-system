@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 import { api, getJobDetail, getMyApplications, saveJob } from "@/lib/api";
 import { JobDetail } from "@/lib/types";
 import { formatSalary } from "@/lib/format";
+import ReportJobButton from "@/components/report-job-button";
 import {
   ArrowLeft,
   Bookmark,
@@ -269,6 +270,12 @@ export default function JobDetailPage() {
                     <Bookmark className="h-4 w-4" />
                     {isSaving ? "Saving..." : isSaved ? "Saved ✓" : "Save Job"}
                   </button>
+                  <ReportJobButton
+                    jobId={job.id}
+                    jobTitle={job.title}
+                    postedByUserId={job.posted_by_user_id ?? null}
+                    className="w-full justify-end"
+                  />
                 </div>
               )}
             </div>

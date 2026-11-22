@@ -250,6 +250,11 @@ export interface JobDetail {
   external_url?: string | null;
   /** Your skill gap for this job (search, AI search, recommendations). */
   skill_gap?: SkillGapSummary | null;
+  /** Set when an admin removed the posting (employer cannot republish). */
+  moderation_removed_at?: string | null;
+  moderation_note?: string | null;
+  /** Distinct users with an open report (employer listing only). */
+  open_reports?: number | null;
 }
 
 export interface JobListResponse {
@@ -898,6 +903,13 @@ export interface AdminOverview {
     flagged_companies: number;
     flagged_users: number;
     resolved_last_7d: number;
+    /** Listings with at least one open user report. */
+    user_reported_jobs?: number;
+    /** Listings reported by >= multi_report_threshold different users. */
+    multi_reported_jobs?: number;
+    multi_report_threshold?: number;
+    /** Postings currently taken down by moderation. */
+    removed_jobs?: number;
   };
   skills: { total: number; embedded: number };
   llm: {
@@ -1435,4 +1447,91 @@ export interface CopilotMemory {
   content: string;
   source: "chat" | "tool" | "user";
   updated_at: string;
+}
+
+// ---------------- Trust & safety: user reports on listings ---------------- //
+
+export type JobReportReason =
+  | "fake_or_scam"
+  | "asks_for_payment"
+  | "misleading"
+  | "already_filled"
+  | "duplicate_or_spam"
+  | "offensive"
+  | "other";
+
+export interface JobReportStatus {
+  reported: boolean;
+  created?: boolean;
+  reason: string | null;
+}
+
+export interface AdminReportedJobReport {
+  id: string;
+  reason: string;
+  details: string | null;
+  severity: "low" | "medium" | "high";
+  status: "open" | "resolved" | "dismissed";
+  created_at: string | null;
+  created_by: string | null;
+  resolution_note: string | null;
+}
+
+export interface AdminReportedJob {
+  job_id: string;
+  title: string;
+  exists: boolean;
+  status: string | null;
+  source: string | null;
+  location: string | null;
+  removed_at: string | null;
+  removal_note: string | null;
+  applicants: number;
+  company: { id: string; name: string; is_verified: boolean } | null;
+  owner: { id: string; email: string; is_active: boolean } | null;
+  /** Distinct users with an open report. */
+  reporters: number;
+  open_reports: number;
+  total_reports: number;
+  multi_reported: boolean;
+  reasons: { reason: string; count: number }[];
+  first_reported_at: string | null;
+  last_reported_at: string | null;
+  reports: AdminReportedJobReport[];
+  risk_score: number;
+  risk_reasons: string[];
+}
+
+export interface AdminReportedJobsResponse {
+  multi_report_threshold: number;
+  total: number;
+  multi_reported: number;
+  items: AdminReportedJob[];
+}
+
+// ---------------- Employer hiring overview ---------------- //
+
+export interface EmployerOverview {
+  total_applicants: number;
+  new_7d: number;
+  counts: PipelineCounts;
+  /** % of all applicants that reached each stage. */
+  conversion: { shortlisted: number; interview: number; offer: number; hired: number };
+  waiting_review: number;
+  needs_review: {
+    application_id: string;
+    job_id: string;
+    job_title: string;
+    candidate_name: string;
+    headline: string | null;
+    applied_at: string;
+    days_waiting: number;
+  }[];
+  recent_hires: {
+    application_id: string;
+    job_id: string;
+    job_title: string;
+    candidate_name: string;
+    hired_at: string | null;
+  }[];
 }

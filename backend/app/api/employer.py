@@ -230,6 +230,9 @@ def set_posting_status(
     the existing PUT /jobs/{id} so validation stays in one place.
     """
     job = _owned_posting(db, current_user, job_id)
+    from app.api.jobs import ensure_not_moderation_locked
+
+    ensure_not_moderation_locked(job, current_user, payload.status)
     job.status = payload.status
     db.commit()
     db.refresh(job)
@@ -992,3 +995,144 @@ def duplicate_posting(
 
     created = _owned_posting(db, current_user, copy.id)
     return _format_job_response(created, applicant_count=0)
+
+
+# --------------------------------------------------------------------------- #
+# Hiring overview: one funnel across every posting + who is waiting on you
+# --------------------------------------------------------------------------- #
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+
+class WaitingApplicantOut(_BaseModel):
+    application_id: UUID
+    job_id: UUID
+    job_title: str
+    candidate_name: str
+    headline: str | None = None
+    applied_at: datetime
+    days_waiting: int
+
+
+class RecentHireOut(_BaseModel):
+    application_id: UUID
+    job_id: UUID
+    job_title: str
+    candidate_name: str
+    hired_at: datetime | None = None
+
+
+class EmployerOverviewOut(_BaseModel):
+    total_applicants: int
+    new_7d: int
+    counts: PipelineCounts
+    # applied -> shortlisted -> interview -> offer -> hired, as shares of all applicants
+    conversion: dict[str, float]
+    waiting_review: int
+    needs_review: list[WaitingApplicantOut]
+    recent_hires: list[RecentHireOut]
+
+
+def _candidate_name(profile: Profile | None, email: str | None) -> str:
+    if profile is not None:
+        name = f"{profile.first_name or ''} {profile.last_name or ''}".strip()
+        if name:
+            return name
+    return (email or "Candidate").split("@")[0]
+
+
+@router.get("/overview", response_model=EmployerOverviewOut)
+def get_employer_overview(
+    current_user: EmployerOnly,
+    db: Annotated[Session, Depends(get_db)],
+) -> EmployerOverviewOut:
+    """Cross-posting hiring funnel for the employer dashboard.
+
+    ``needs_review`` lists applications still in APPLIED (never opened),
+    oldest first, so candidates are not left without an answer.  SAVED rows
+    are seekers' bookmarks, not applications, and are excluded throughout.
+    """
+    own_jobs = select(Job.id).where(Job.posted_by_user_id == current_user.id)
+    base = [Application.job_id.in_(own_jobs), Application.status != ApplicationStatus.SAVED]
+
+    counts = {s: 0 for s in ApplicationStatus}
+    for stage, n in db.execute(
+        select(Application.status, func.count(Application.id)).where(*base).group_by(Application.status)
+    ).all():
+        counts[stage] = int(n)
+    total = sum(n for s, n in counts.items() if s != ApplicationStatus.SAVED)
+
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    new_7d = int(db.scalar(select(func.count(Application.id)).where(*base, Application.applied_at >= week_ago)) or 0)
+
+    # "reached at least this stage" so the funnel is monotone
+    reached = {
+        "shortlisted": counts[ApplicationStatus.SHORTLISTED]
+        + counts[ApplicationStatus.INTERVIEW]
+        + counts[ApplicationStatus.OFFER]
+        + counts[ApplicationStatus.HIRED],
+        "interview": counts[ApplicationStatus.INTERVIEW] + counts[ApplicationStatus.OFFER] + counts[ApplicationStatus.HIRED],
+        "offer": counts[ApplicationStatus.OFFER] + counts[ApplicationStatus.HIRED],
+        "hired": counts[ApplicationStatus.HIRED],
+    }
+    conversion = {k: (round(100.0 * v / total, 1) if total else 0.0) for k, v in reached.items()}
+
+    now = datetime.now(timezone.utc)
+    waiting_rows = db.execute(
+        select(Application, Job.title, Profile, User.email)
+        .join(Job, Job.id == Application.job_id)
+        .join(User, User.id == Application.user_id)
+        .outerjoin(Profile, Profile.user_id == Application.user_id)
+        .where(*base, Application.status == ApplicationStatus.APPLIED)
+        .order_by(Application.applied_at.asc())
+        .limit(8)
+    ).all()
+    waiting_total = counts[ApplicationStatus.APPLIED]
+
+    hire_rows = db.execute(
+        select(Application, Job.title, Profile, User.email)
+        .join(Job, Job.id == Application.job_id)
+        .join(User, User.id == Application.user_id)
+        .outerjoin(Profile, Profile.user_id == Application.user_id)
+        .where(*base, Application.status == ApplicationStatus.HIRED)
+        .order_by(Application.updated_at.desc())
+        .limit(5)
+    ).all()
+
+    return EmployerOverviewOut(
+        total_applicants=total,
+        new_7d=new_7d,
+        counts=PipelineCounts(
+            applied=counts[ApplicationStatus.APPLIED],
+            viewed=counts[ApplicationStatus.VIEWED],
+            shortlisted=counts[ApplicationStatus.SHORTLISTED],
+            interview=counts[ApplicationStatus.INTERVIEW],
+            rejected=counts[ApplicationStatus.REJECTED],
+            offer=counts[ApplicationStatus.OFFER],
+            hired=counts[ApplicationStatus.HIRED],
+            saved=0,
+        ),
+        conversion=conversion,
+        waiting_review=waiting_total,
+        needs_review=[
+            WaitingApplicantOut(
+                application_id=app_row.id,
+                job_id=app_row.job_id,
+                job_title=title,
+                candidate_name=_candidate_name(profile, email),
+                headline=getattr(profile, "headline", None),
+                applied_at=app_row.applied_at,
+                days_waiting=max(0, (now - app_row.applied_at).days) if app_row.applied_at else 0,
+            )
+            for app_row, title, profile, email in waiting_rows
+        ],
+        recent_hires=[
+            RecentHireOut(
+                application_id=app_row.id,
+                job_id=app_row.job_id,
+                job_title=title,
+                candidate_name=_candidate_name(profile, email),
+                hired_at=app_row.updated_at,
+            )
+            for app_row, title, profile, email in hire_rows
+        ],
+    )

@@ -1,4 +1,8 @@
 import {
+  AdminReportedJobsResponse,
+  EmployerOverview,
+  JobReportReason,
+  JobReportStatus,
   CopilotChatResponse,
   CopilotConversation,
   CopilotConversationSummary,
@@ -1097,4 +1101,52 @@ export async function addCopilotMemory(
 
 export async function deleteCopilotMemory(memoryId: string, token: string): Promise<void> {
   return authedVoid(`${copilotBase()}/memories/${memoryId}`, token, { method: "DELETE" });
+}
+
+// ---------------- Trust & safety: report a listing ---------------- //
+
+export async function reportJob(
+  jobId: string,
+  payload: { reason: JobReportReason; details?: string },
+  token: string,
+): Promise<JobReportStatus> {
+  return authedJson(`${getBrowserApiBaseUrl()}/api/v1/jobs/${jobId}/report`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getMyJobReport(jobId: string, token: string): Promise<JobReportStatus> {
+  return authedJson(`${getBrowserApiBaseUrl()}/api/v1/jobs/${jobId}/report/me`, token);
+}
+
+export async function getReportedJobs(
+  token: string,
+  params: { min_reporters?: number; include_closed?: boolean; limit?: number } = {},
+): Promise<AdminReportedJobsResponse> {
+  const search = new URLSearchParams();
+  if (params.min_reporters) search.set("min_reporters", String(params.min_reporters));
+  if (params.include_closed) search.set("include_closed", "true");
+  if (params.limit) search.set("limit", String(params.limit));
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return authedJson(`${getBrowserApiBaseUrl()}/api/v1/admin/moderation/reported-jobs${suffix}`, token);
+}
+
+export async function actOnReportedJob(
+  jobId: string,
+  action: "remove" | "dismiss" | "restore",
+  token: string,
+  note?: string,
+): Promise<{ status: string }> {
+  return authedJson(
+    `${getBrowserApiBaseUrl()}/api/v1/admin/moderation/reported-jobs/${jobId}/${action}`,
+    token,
+    { method: "POST", body: action === "restore" ? undefined : JSON.stringify({ note: note || null }) },
+  );
+}
+
+// ---------------- Employer hiring overview ---------------- //
+
+export async function getEmployerOverview(token: string): Promise<EmployerOverview> {
+  return authedJson(`${getBrowserApiBaseUrl()}/api/v1/employer/overview`, token);
 }

@@ -8,6 +8,7 @@ import { api, saveJob } from "@/lib/api";
 import { JobDetail } from "@/lib/types";
 import { formatSalary } from "@/lib/format";
 import SkillGapChips from "@/components/skill-gap-chips";
+import ReportJobButton from "@/components/report-job-button";
 import { isExternalJobSaved, saveExternalJob } from "@/lib/saved-external";
 import {
   Bookmark,
@@ -265,6 +266,12 @@ export default function JobDetailModal({ job, open, onClose }: Props) {
                       Live external listing — saved to your Saved Jobs list in this browser.
                     </p>
                   )}
+                  <ReportJobButton
+                    jobId={job.id}
+                    jobTitle={job.title}
+                    postedByUserId={job.posted_by_user_id ?? null}
+                    className="self-center pt-1"
+                  />
                 </div>
               </div>
 
