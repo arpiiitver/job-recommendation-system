@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     llm_cache_max_entries: int = 256
     llm_max_repair_turns: int = 1
 
+    # ---- Career Copilot agent (chatbot) ----
+    # The agent only *calls* the existing pipeline (search, M0-M4 ranking,
+    # calibrated tiers, skill gaps); it never trains or rescores anything.
+    agent_enabled: bool = True
+    agent_max_steps: int = 6              # tool-calling rounds per user turn
+    agent_history_messages: int = 16      # raw messages replayed each turn
+    agent_summarize_after: int = 24       # older messages fold into a summary
+    agent_memory_top_k: int = 8           # long-term memories injected per turn
+    agent_temperature: float = 0.2
+    # per-user chat turns per minute (each turn can fan out into several LLM calls); 0 disables
+    rate_limit_llm_per_minute: int = 20
+
     # ---- Trained model suite M1–M3 (AI-mandatory) ----
     # M1: enable learned skill2vec transfer signals.
     skill2vec_enabled: bool = True

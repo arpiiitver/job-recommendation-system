@@ -56,6 +56,12 @@ PREFERRED_MARKERS = (
 )
 
 
+# Skill surfaces that are also everyday words: matched case-sensitively.
+_CASE_SENSITIVE_SURFACES: dict[str, str] = {
+    "go": r"(?<![A-Za-z0-9+.#-])Go(?![A-Za-z0-9+.#-])(?!\s+(?:to|live|ahead|beyond|through|getter)\b)",
+}
+
+
 def load_surface_pairs() -> list[tuple[str, str]]:
     """(surface, canonical) pairs from the curated YAML — the offline stand-in
     for the DB alias table (same source of truth, seed_canonical loads it)."""
@@ -96,15 +102,21 @@ def extract_skills(
     (stage 4 --llm) only contributes *extra surfaces* to this same matcher,
     never direct writes.
     """
-    text = f"{title}\n{description}".lower()
+    original = f"{title}\n{description}"
+    text = original.lower()
     marker = _preferred_marker_index(text)
     out: dict[str, tuple[str, bool]] = {}
     for surface, canonical in pairs:
         surface = surface.lower()
         if len(surface) < 2:
             continue
-        pattern = rf"(?<![a-z0-9+.#]){re.escape(surface)}(?![a-z0-9+.#])"
-        match = re.search(pattern, text)
+        if surface in _CASE_SENSITIVE_SURFACES:
+            # ordinary English words ("go live", "go-getter") must not become the
+            # Go language: require the capitalised product spelling.
+            match = re.search(_CASE_SENSITIVE_SURFACES[surface], original)
+        else:
+            pattern = rf"(?<![a-z0-9+.#]){re.escape(surface)}(?![a-z0-9+.#])"
+            match = re.search(pattern, text)
         if not match:
             continue
         required = not (marker != -1 and match.start() > marker)

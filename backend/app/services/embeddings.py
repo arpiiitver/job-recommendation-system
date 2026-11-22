@@ -131,6 +131,7 @@ def build_profile_text(
     skill_names: list[str],
     target_family: str | None = None,
     project_blurb: str | None = None,
+    goals: str | None = None,
 ) -> str:
     parts = [p for p in (headline, bio) if p]
     if skill_names:
@@ -139,7 +140,25 @@ def build_profile_text(
         parts.append(f"Target role: {target_family}")
     if project_blurb:
         parts.append(project_blurb)
+    if goals:
+        parts.append(goals)
     return " \n ".join(parts).strip()
+
+
+def profile_goals_text(profile: Any) -> str | None:
+    """Career goals as text for the profile embedding / cross-encoder input, so a
+    role switcher is matched toward the roles they want, not only their past."""
+    parts = []
+    roles = [r for r in (getattr(profile, "target_roles", None) or []) if r]
+    if roles:
+        parts.append("Target roles: " + ", ".join(roles))
+    interests = [i for i in (getattr(profile, "career_interests", None) or []) if i]
+    if interests:
+        parts.append("Interested in: " + ", ".join(interests))
+    learning = [s for s in (getattr(profile, "learning_skills", None) or []) if s]
+    if learning:
+        parts.append("Currently learning: " + ", ".join(learning))
+    return ". ".join(parts) or None
 
 
 def build_job_text(
@@ -179,6 +198,7 @@ def ensure_profile_embedding(profile: Any) -> bool:
             else None
         ),
         project_blurb=None,
+        goals=profile_goals_text(profile),
     )
     content_hash = compute_content_hash(text)
 

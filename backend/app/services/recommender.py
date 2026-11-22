@@ -44,6 +44,7 @@ from app.services.embeddings import (
     ensure_job_embeddings,
     ensure_profile_embedding,
     is_compatible_embedding,
+    profile_goals_text,
     to_usd,
 )
 from app.services.cross_encoder import get_cross_encoder
@@ -234,6 +235,14 @@ class _ProfileContext:
                     ps.proficiency_level,
                     ps.years_of_experience,
                 )
+        # Skills being learned count as beginner-level evidence (partial credit),
+        # so switchers are not scored as if they knew nothing of the new domain.
+        from app.models.enums import ProficiencyLevel  # noqa: PLC0415
+
+        for name in getattr(profile, "learning_skills", None) or []:
+            key = str(name).lower().strip()
+            if key and key not in self.seeker_skills:
+                self.seeker_skills[key] = (ProficiencyLevel.BEGINNER, 0.0)
         self.possessed = set(self.seeker_skills)
         self.graph: SkillGraph = load_seed_graph()
         self.profile = profile
@@ -448,6 +457,7 @@ class ContentRecommender:
                 ],
                 target_family=getattr(getattr(profile, "target_family", None), "name", None),
                 project_blurb=None,
+                goals=profile_goals_text(profile),
             )
             job_texts = []
             ce_jobs = jobs[:ce_k]

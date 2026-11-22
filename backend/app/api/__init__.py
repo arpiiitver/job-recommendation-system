@@ -58,3 +58,8 @@ api_router.include_router(monitoring_router)
 from app.api.llm_curation import router as llm_curation_router  # noqa: E402
 
 api_router.include_router(llm_curation_router)
+
+# ---- Career Copilot (chatbot agent over the existing ML pipeline) ----
+from app.api.copilot import router as copilot_router  # noqa: E402
+
+api_router.include_router(copilot_router)

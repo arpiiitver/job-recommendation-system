@@ -23,6 +23,8 @@ JobRec is a full-stack job recommendation and career-path platform built with **
 | **M4 Bandit** | NeuralUCB exploration slot that **learns online from real interactions** (starts fresh) | — (offline policy only in a separate simulation study, `ml/artifacts/simulation/`) | Simulation only; not a real-data result |
 | **M5 Planning** | 3-stage Agentic Planner–Critic roadmap pipeline with `agent_trace` | — | Evaluated on DB `(profile, job)` pairs (needs the database) |
 
+**Career Copilot (chatbot, `/copilot`):** an LLM agent (Gemini/OpenAI/Ollama via native tool calling) that *uses* the pipeline above instead of replacing it. It picks tools — search, ranked matches (M0–M4, calibrated M3 tiers), per-job skill gaps, target-role gaps for switchers, saved jobs, resume tailoring, career-goal updates, long-term memory — and quotes their numbers verbatim; it never scores jobs itself. Chat reads the feed through `build_recommendation_feed` (read-only), so chat views are never logged as served impressions and never feed the bandit. With no LLM key it falls back to a deterministic intent router over the same tools. Code: `backend/app/services/agent/`, `backend/app/api/copilot.py`.
+
 **Unified evaluation:** `backend/ml/evaluate_all.py` aggregates the reports above into `backend/ml/reports/master_project_evaluation.json` (M0–M4 run without a database). Details, method and limitations: `docs/PROJECT_STATE.md` §2a.
 
 ## Tech stack

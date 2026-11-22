@@ -253,6 +253,8 @@ def _format_profile_response(profile: Profile) -> ProfileDetailResponse:
         target_family=(
             profile.target_family.name if profile.target_family is not None else None
         ),
+        target_roles=profile.target_roles,
+        learning_skills=profile.learning_skills,
         education_rows=profile.education_rows or [],
         experience_rows=profile.experience_rows or [],
         project_rows=profile.project_rows or [],
@@ -362,6 +364,38 @@ def update_my_profile(
                     detail=f"Unknown job family '{raw_family}'.",
                 )
             profile.target_job_family_id = family.id
+
+    if payload.target_roles is not None:
+        roles: list[str] = []
+        for r in payload.target_roles:
+            r = (r or "").strip()[:100]
+            if r and r.lower() not in {x.lower() for x in roles}:
+                roles.append(r)
+        profile.target_roles = roles[:5] or None
+        # Map the first role that matches a job family onto target_family, so the
+        # ranker's career-family features and the live-job query follow the
+        # role the seeker WANTS (unless a family was given explicitly).
+        if payload.target_family is None and roles:
+            from app.services.ingest import assign_family, load_families  # noqa: PLC0415
+
+            families = load_families()
+            for role in roles:
+                fam_name = assign_family(role, families)
+                if fam_name:
+                    fam = db.scalar(select(JobFamily).where(func.lower(JobFamily.name) == fam_name.lower()))
+                    if fam is not None:
+                        profile.target_job_family_id = fam.id
+                        break
+    if payload.learning_skills is not None:
+        learning: list[str] = []
+        for name in payload.learning_skills:
+            name = (name or "").strip()
+            if not name:
+                continue
+            canonical = resolve_skill(db, name).name  # same normalizer as profile skills
+            if canonical.lower() not in {x.lower() for x in learning}:
+                learning.append(canonical)
+        profile.learning_skills = learning[:25] or None
 
     if payload.skills is not None:
         # Clear existing associations

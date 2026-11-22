@@ -64,6 +64,11 @@ export interface ProfileDetail {
   resumes?: ResumeParseRow[];
   created_at: string;
   updated_at: string;
+  /** Career goals: roles wanted next, domains of interest, skills being learned. */
+  target_roles?: string[] | null;
+  career_interests?: string[] | null;
+  learning_skills?: string[] | null;
+  target_family?: string | null;
 }
 
 export interface ProfileUpdatePayload {
@@ -77,6 +82,9 @@ export interface ProfileUpdatePayload {
   skills?: ProfileSkillItem[];
   education?: EducationItem[];
   work_experience?: ExperienceItem[];
+  target_roles?: string[];
+  career_interests?: string[];
+  learning_skills?: string[];
 }
 
 export interface CompanySummary {
@@ -194,6 +202,17 @@ export interface JobUpdatePayload {
   family?: string;
 }
 
+/** Seeker-vs-job skill comparison (present when logged in). */
+export interface SkillGapSummary {
+  matched: string[];
+  learning: string[];
+  transferable: string[];
+  missing_required: string[];
+  missing_preferred: string[];
+  required_total: number;
+  required_covered: number;
+}
+
 export interface JobDetail {
   id: string;
   /** Null for transient live listings (Adzuna) — they have no DB row. */
@@ -229,6 +248,8 @@ export interface JobDetail {
    * Absent/null for native in-app postings → Apply stays internal.
    */
   external_url?: string | null;
+  /** Your skill gap for this job (search, AI search, recommendations). */
+  skill_gap?: SkillGapSummary | null;
 }
 
 export interface JobListResponse {
@@ -1051,4 +1072,148 @@ export interface RecommendationEventPayload {
   recommendation_id: string;
   event_type: 'generated' | 'served' | 'impression' | 'clicked' | 'dismissed' | 'saved' | 'applied';
   rank?: number;
+}
+
+// ---------------- Career Copilot (agent chat + long-term memory) ---------------- //
+
+export type CopilotMode = "llm" | "fallback";
+
+export interface CopilotStatus {
+  mode: CopilotMode;
+  provider: string | null;
+  model: string | null;
+  tools: string[];
+}
+
+/** One tool call the agent made during a turn. */
+export interface CopilotTrace {
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  ms: number;
+  /** True when the tool changed the user's data (save job, remember, ...). */
+  writes: boolean;
+  error: string | null;
+}
+
+export interface CopilotJobCard {
+  type: "job";
+  id: string;
+  title: string;
+  company: string | null;
+  location: string;
+  is_remote: boolean;
+  salary: string | null;
+  source: string;
+  url: string | null;
+  experience_level: string | null;
+  /** Calibrated ML match % (recommendations only; search results carry none). */
+  match_score: number | null;
+  match_tier: "top" | "strong" | "possible" | null;
+  /** Share of the job's required skills the seeker has. */
+  skill_match: number | null;
+  skill_gap: SkillGapSummary | null;
+  reasons: string[];
+}
+
+export interface CopilotDirectionGapCard {
+  type: "direction_gap";
+  target: string;
+  jobs_analyzed: number;
+  readiness: number | null;
+  skills: { skill: string; share: number; status: "have" | "learning" | "transferable" | "missing" }[];
+}
+
+export interface CopilotGapCard {
+  type: "gap";
+  job_id: string;
+  title: string;
+  match_score?: number | null;
+  match_tier?: "top" | "strong" | "possible" | null;
+  formula_match_score?: number | null;
+  skill_gap_score?: number | null;
+  /** Not sent by this backend; kept for the shared renderer. */
+  readiness?: Readiness | number | null;
+  counts?: Partial<Record<"strong" | "partial" | "transferable" | "missing", number>> | null;
+  missing_required_skills?: string[];
+  have_skills?: string[];
+  learning_skills?: string[];
+  transferable_skills?: string[];
+  weakest_link?: string | null;
+  skills?: { skill: string; status: string }[];
+  reasons?: string[];
+  note?: string | null;
+}
+
+export interface CopilotApplicationsCard {
+  type: "applications";
+  items: { job_id: string; title: string; company: string; status: string; updated: string | null }[];
+}
+
+export interface CopilotResumeCard {
+  type: "resume";
+  job_id: string;
+  job_title: string;
+  ats: Record<string, unknown>;
+  suggestions: Record<string, unknown>[];
+  llm_used: boolean;
+  disclaimer: string | null;
+}
+
+export type CopilotCard =
+  | CopilotJobCard
+  | CopilotDirectionGapCard
+  | CopilotGapCard
+  | CopilotApplicationsCard
+  | CopilotResumeCard;
+
+export interface CopilotChatResponse {
+  conversation_id: string;
+  message_id: string;
+  reply: string;
+  /** May contain card types this UI doesn't know yet — they are ignored. */
+  cards: CopilotCard[];
+  trace: CopilotTrace[];
+  mode: CopilotMode;
+  memories_used: string[];
+  model: string | null;
+}
+
+export interface CopilotConversationSummary {
+  id: string;
+  title: string;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface CopilotMessageMeta {
+  cards?: CopilotCard[];
+  trace?: CopilotTrace[];
+  mode?: CopilotMode;
+  model?: string | null;
+  memories_used?: string[];
+  shown?: unknown;
+}
+
+export interface CopilotMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  meta: CopilotMessageMeta | null;
+}
+
+export interface CopilotConversation extends CopilotConversationSummary {
+  summary: string | null;
+  messages: CopilotMessage[];
+}
+
+export type CopilotMemoryKind = "preference" | "dealbreaker" | "goal" | "fact";
+
+export interface CopilotMemory {
+  id: string;
+  kind: CopilotMemoryKind;
+  content: string;
+  source: "chat" | "tool" | "user";
+  updated_at: string;
 }

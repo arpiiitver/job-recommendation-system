@@ -297,6 +297,23 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              {/* Career goals nudge (role/domain switchers) */}
+              {profile && !(profile.target_roles && profile.target_roles.length > 0) && (
+                <Link
+                  href="/profile#career-goals"
+                  className="flex items-center justify-between gap-4 rounded-xl border border-teal-500/30 bg-teal-500/5 p-4 hover:border-teal-500/60 transition-colors"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-teal-300">Switching roles or aiming for something new?</p>
+                    <p className="mt-0.5 text-xs text-zinc-400">
+                      Add the roles you are targeting and the skills you are learning — your matches and skill gaps
+                      will follow your goals, not just your resume.
+                    </p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-teal-400" />
+                </Link>
+              )}
+
               {/* Top AI Matches Widget */}
               <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-6 backdrop-blur">
                 <div className="flex items-center justify-between mb-4">

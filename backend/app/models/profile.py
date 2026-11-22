@@ -125,6 +125,10 @@ class Profile(Base):
         JSONB,
         nullable=True,
     )
+    # Career goals (0015): roles the seeker wants next - may differ from the
+    # resume history (role/domain switchers) - and skills being learned.
+    target_roles: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    learning_skills: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     preferred_locations: Mapped[list[str] | None] = mapped_column(
         ARRAY(String(150)),
         nullable=True,

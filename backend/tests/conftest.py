@@ -35,6 +35,14 @@ def _llm_test_mode():
 
 
 @pytest.fixture(autouse=True)
+def _no_tool_provider(monkeypatch):
+    """Copilot agent: deterministic router unless a test injects a fake LLM."""
+    import app.services.llm.tool_provider as tool_provider_mod
+
+    monkeypatch.setattr(tool_provider_mod, "get_tool_provider", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_live_provider(monkeypatch):
     """Never hit api.adzuna.com from the suite (quota + determinism)."""
 

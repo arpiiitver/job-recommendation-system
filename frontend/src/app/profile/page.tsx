@@ -30,6 +30,7 @@ import {
   Upload,
   User as UserIcon,
 } from "lucide-react";
+import CareerGoalsSection from "@/components/career-goals-section";
 
 /** Server-side limits from ProfileUpdateRequest, enforced client-side so an
  *  over-long parsed value can never 422 the Save. */
@@ -77,6 +78,11 @@ export default function ProfilePage() {
   const [phone, setPhone] = useState("");
   const [yearsOfExp, setYearsOfExp] = useState<number | "">("");
 
+  // Career goals (role/domain switchers)
+  const [targetRoles, setTargetRoles] = useState<string[]>([]);
+  const [careerInterests, setCareerInterests] = useState<string[]>([]);
+  const [learningSkills, setLearningSkills] = useState<string[]>([]);
+
   // Skills
   const [skills, setSkills] = useState<ProfileSkillItem[]>([]);
   const [skillSearch, setSkillSearch] = useState("");
@@ -106,6 +112,9 @@ export default function ProfilePage() {
           setSkills(data.skills || []);
           setEducation(data.education || []);
           setExperience(data.work_experience || []);
+          setTargetRoles(data.target_roles || []);
+          setCareerInterests(data.career_interests || []);
+          setLearningSkills(data.learning_skills || []);
         })
         .catch((err) => {
           setMessage({ type: "error", text: err.message });
@@ -325,6 +334,9 @@ export default function ProfilePage() {
           skills,
           education,
           work_experience: experience,
+          target_roles: targetRoles,
+          career_interests: careerInterests,
+          learning_skills: learningSkills,
         },
         token
       );
@@ -589,7 +601,8 @@ export default function ProfilePage() {
             <div>
               <h2 className="text-lg font-semibold text-zinc-100">Skills & Proficiencies</h2>
               <p className="mt-1 text-xs text-zinc-400">
-                Used to match your profile with relevant job openings.
+                Used to match your profile with relevant job openings. Add any skill you have —
+                including ones that are not on your resume.
               </p>
             </div>
             <span className="text-xs font-medium text-teal-400">
@@ -696,6 +709,17 @@ export default function ProfilePage() {
             ))}
           </div>
         </section>
+
+        {/* Career goals: roles wanted, domains, skills being learned */}
+        <CareerGoalsSection
+          targetRoles={targetRoles}
+          setTargetRoles={setTargetRoles}
+          interests={careerInterests}
+          setInterests={setCareerInterests}
+          learning={learningSkills}
+          setLearning={setLearningSkills}
+          haveSkills={skills.map((s) => s.skill_name)}
+        />
 
         {/* Work Experience */}
         <section className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-6 backdrop-blur">

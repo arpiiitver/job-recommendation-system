@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { getRecommendations, submitFeedback, recordRecommendationEvent } from "@/lib/api";
 import { formatSalary, MATCH_TIER_META, matchTierOf, type MatchTier } from "@/lib/format";
 import JobDetailModal from "@/components/job-detail-modal";
+import SkillGapChips from "@/components/skill-gap-chips";
 import {
   FeedbackReason,
   JobDetail,
@@ -413,7 +414,12 @@ export default function RecommendationsPage() {
                         </div>
                       )}
 
-                      {/* Skill Breakdown: Matched & Missing */}
+                      {/* Skill Breakdown: have / learning / transferable / missing */}
+                      {item.job.skill_gap ? (
+                        <div className="mt-4">
+                          <SkillGapChips gap={item.job.skill_gap} />
+                        </div>
+                      ) : (
                       <div className="mt-4 space-y-2">
                         {item.matched_skills.length > 0 && (
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -447,6 +453,7 @@ export default function RecommendationsPage() {
                           </div>
                         )}
                       </div>
+                      )}
                     </div>
 
                     {/* Right Column: Score Breakdown & Action CTA */}

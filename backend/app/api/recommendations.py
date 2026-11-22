@@ -20,6 +20,7 @@ from app.schemas.recommendation import (
 )
 from app.services import live_jobs, personalization
 from app.services.recommender import ContentRecommender, generate_candidates
+from app.services.skill_gap_view import annotate as annotate_skill_gaps, load_seeker_skills
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,21 @@ def get_recommendation_feed(
     5. §12 explanation contract per item.
     6. Snapshot persistence for the offline evaluation loop (plan §3).
     7. RecommendationEvent recording (SERVED) with exact recommendation_id.
+    """
+    feed, profile = build_recommendation_feed(db, current_user, limit)
+    _persist_served(db, profile, feed, limit)
+    return feed
+
+
+def build_recommendation_feed(
+    db: Session, current_user: User, limit: int
+) -> tuple[RecommendationFeedResponse, Profile]:
+    """Steps 1-5 of the feed (candidates -> M0-M4 ranking -> skill gaps).
+
+    Pure read path: nothing is logged here.  The HTTP feed persists what it
+    served (snapshots + SERVED events feed offline eval and the bandit's
+    online rewards); the Career Copilot calls this directly so chat views
+    never pollute that training signal.
     """
     # 1. Fetch user's profile with eager-loaded skills
     profile = db.scalar(
@@ -94,7 +110,14 @@ def get_recommendation_feed(
         affinities=affinities,
         personalization_note=m4_note,
     )
+    # Same skill-gap breakdown as search (incl. "learning" + transferable skills)
+    annotate_skill_gaps(load_seeker_skills(db, current_user.id), [item.job for item in feed.items])
+    return feed, profile
 
+
+def _persist_served(
+    db: Session, profile: Profile, feed: RecommendationFeedResponse, limit: int
+) -> None:
     # 4. Persist what was served — snapshot carries component breakdown +
     # explanation contract; best-effort so bookkeeping never fails a feed.
     try:
@@ -141,8 +164,6 @@ def get_recommendation_feed(
         db.commit()
     except Exception:
         db.rollback()
-
-    return feed
 
 
 @router.post(

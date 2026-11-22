@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import get_current_user, get_optional_user, require_roles
 from app.core.db import get_db
 from app.models.application import Application
 from app.models.company import Company
@@ -26,6 +26,7 @@ from app.schemas.job import (
 from app.schemas.user import CompanySummary
 from app.services import live_jobs, nl_search
 from app.services.ingest import detect_fresher
+from app.services.skill_gap_view import annotate as annotate_skill_gaps, load_seeker_skills
 from app.services.skill_normalizer import build_db_normalizer, resolve_skill
 
 router = APIRouter(tags=["jobs"])
@@ -325,6 +326,7 @@ def create_job(
 @router.get("/jobs", response_model=JobListResponse)
 def list_jobs(
     db: Annotated[Session, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)] = None,
     q: str | None = None,
     search: str | None = None,
     sort_by: str = Query(default="relevance", pattern="^(relevance|date|salary)$"),
@@ -531,6 +533,8 @@ def list_jobs(
         jobs = db.scalars(query).all()
         items = [_format_job_response(j) for j in jobs]
 
+    if viewer is not None:
+        annotate_skill_gaps(load_seeker_skills(db, viewer.id), items)
     total_pages = max(1, math.ceil(total / page_size))
     return JobListResponse(
         items=items,
@@ -545,6 +549,7 @@ def list_jobs(
 def nl_search_jobs(
     db: Annotated[Session, Depends(get_db)],
     q: Annotated[str, Query(min_length=1, max_length=300)],
+    viewer: Annotated[User | None, Depends(get_optional_user)] = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> JobNlResponse:
@@ -600,6 +605,8 @@ def nl_search_jobs(
         total = len(platform_items)
         items = platform_items[offset : offset + page_size]
 
+    if viewer is not None:
+        annotate_skill_gaps(load_seeker_skills(db, viewer.id), items)
     return JobNlResponse(
         items=items,
         total=total,

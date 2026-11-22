@@ -31,6 +31,7 @@ from app.models.profile_entities import (
     Project,
     Resume,
 )
+from app.models.copilot import CopilotConversation, CopilotMemory, CopilotMessage
 from app.models.recommendation import Recommendation, RecommendationEvent, SkillGap
 from app.models.simulation import Simulation
 from app.models.skill import JobSkill, ProfileSkill, Skill
@@ -45,6 +46,9 @@ __all__ = [
     "CareerPathStep",
     "Certification",
     "Company",
+    "CopilotConversation",
+    "CopilotMemory",
+    "CopilotMessage",
     "Education",
     "EmploymentType",
     "Experience",

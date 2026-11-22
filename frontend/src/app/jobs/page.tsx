@@ -5,6 +5,7 @@ import Link from "next/link";
 import { getJobs, searchJobsNL } from "@/lib/api";
 import { JobDetail, JobNlResponse } from "@/lib/types";
 import { formatSalary } from "@/lib/format";
+import SkillGapChips from "@/components/skill-gap-chips";
 import JobDetailModal from "@/components/job-detail-modal";
 import {
   ArrowUpDown,
@@ -581,6 +582,13 @@ export default function JobsPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Your skill gap for this job (logged-in seekers; live jobs too) */}
+              {job.skill_gap && (
+                <div className="mt-4 border-t border-zinc-800/60 pt-3">
+                  <SkillGapChips gap={job.skill_gap} compact />
+                </div>
+              )}
 
               {/* Skills Chips */}
               {job.skills && job.skills.length > 0 && (

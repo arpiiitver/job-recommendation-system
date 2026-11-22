@@ -57,6 +57,18 @@ class JobUpdateRequest(BaseModel):
     family: str | None = Field(default=None, max_length=100)
 
 
+class SkillGapSummary(BaseModel):
+    """Seeker-vs-job skill comparison (only when a seeker is logged in)."""
+
+    matched: list[str] = []
+    learning: list[str] = []
+    transferable: list[str] = []
+    missing_required: list[str] = []
+    missing_preferred: list[str] = []
+    required_total: int = 0
+    required_covered: int = 0
+
+
 class JobDetailResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -87,6 +99,8 @@ class JobDetailResponse(BaseModel):
     # ---- additive Phase 1 (plan §5/§13) ----
     family: str | None = None
     project_relevance: str | None = None
+    # per-seeker skill gap (search, AI search, recommendations; live jobs too)
+    skill_gap: SkillGapSummary | None = None
     # Real posting URL (Adzuna /details/<id> or the employer's own page) so the
     # UI can send the seeker to the live opening.  None for native postings,
     # which are applied to in-app.

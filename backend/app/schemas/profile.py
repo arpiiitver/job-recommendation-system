@@ -53,6 +53,10 @@ class ProfileUpdateRequest(BaseModel):
     preferred_locations: list[str] | None = None
     # canonical job-family name; "" clears the target family
     target_family: str | None = Field(default=None, max_length=100)
+    # career goals: roles wanted next (switchers) + skills being learned;
+    # [] clears, None leaves unchanged
+    target_roles: list[str] | None = Field(default=None, max_length=5)
+    learning_skills: list[str] | None = Field(default=None, max_length=25)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +202,8 @@ class ProfileDetailResponse(BaseModel):
     career_interests: list[str] | None = None
     preferred_locations: list[str] | None = None
     target_family: str | None = None
+    target_roles: list[str] | None = None
+    learning_skills: list[str] | None = None
     education_rows: list[EducationResponse] = []
     experience_rows: list[ExperienceResponse] = []
     project_rows: list[ProjectResponse] = []

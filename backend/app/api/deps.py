@@ -14,6 +14,27 @@ from app.models.enums import UserRole
 from app.models.user import User
 
 security_scheme = HTTPBearer(auto_error=True)
+optional_security_scheme = HTTPBearer(auto_error=False)
+
+
+def get_optional_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(optional_security_scheme)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User | None:
+    """Logged-in user if a valid access token is sent, else None (never 401).
+
+    Public endpoints (job search) use it to add per-user extras such as the
+    skill gap without requiring login."""
+    if credentials is None:
+        return None
+    try:
+        payload = decode_token(credentials.credentials)
+        if payload.get("type") != "access":
+            return None
+        user = db.get(User, UUID(str(payload.get("sub"))))
+    except Exception:  # noqa: BLE001 - bad/expired token on a public endpoint
+        return None
+    return user if user is not None and getattr(user, "is_active", True) else None
 
 
 def get_current_user(

@@ -335,6 +335,9 @@ def profile_live_query(profile: Profile) -> str:
     bound as the proven ingest rotation queries).
     """
     candidates: list[str] = []
+    roles = [r for r in (getattr(profile, "target_roles", None) or []) if r and r.strip()]
+    if roles:
+        candidates.append(roles[0])  # the role the seeker wants next wins
     try:
         target = getattr(profile, "target_family", None)
         if target is not None and target.name:
@@ -371,4 +374,11 @@ def live_candidates(db: Session, profile: Profile, limit: int) -> list[Job]:
     postings, _total = search_postings(
         query, page=1, page_size=max(min(limit, 25), 10)
     )
-    return [transient_job(db, p) for p in postings[:limit]]
+    # A switcher with a second target role gets candidates for it too.
+    roles = [r for r in (getattr(profile, "target_roles", None) or []) if r and r.strip()]
+    if len(roles) > 1:
+        second = " ".join(roles[1].split()[:3])
+        extra, _t = search_postings(second, page=1, page_size=10)
+        seen = {p.get("external_id") for p in postings}
+        postings = postings + [p for p in extra if p.get("external_id") not in seen]
+    return [transient_job(db, p) for p in postings[: limit + 10]]

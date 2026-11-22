@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { api, saveJob } from "@/lib/api";
 import { JobDetail } from "@/lib/types";
 import { formatSalary } from "@/lib/format";
+import SkillGapChips from "@/components/skill-gap-chips";
 import { isExternalJobSaved, saveExternalJob } from "@/lib/saved-external";
 import {
   Bookmark,
@@ -268,6 +269,12 @@ export default function JobDetailModal({ job, open, onClose }: Props) {
               </div>
 
               <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4">
+                {job.skill_gap && (
+                  <div className="mb-5 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                    <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-zinc-400">Your skill gap</h3>
+                    <SkillGapChips gap={job.skill_gap} />
+                  </div>
+                )}
                 <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-zinc-400">
                   <Sparkles className="h-4 w-4 text-teal-400" /> Skill Requirements
                 </h3>
